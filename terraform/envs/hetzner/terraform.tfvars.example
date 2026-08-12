@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Or export TF_VAR_* env vars.
+
+# ── Required ─────────────────────────────────────────────────────────────────
+# Hetzner Cloud API token (Project → Security → API Tokens, Read & Write).
+# Prefer: export TF_VAR_hcloud_token="..."  (keeps it out of files entirely)
+hcloud_token = "REPLACE_WITH_HCLOUD_TOKEN"
+
+# ── Cluster ──────────────────────────────────────────────────────────────────
+cluster_name       = "freshehr"
+location           = "nbg1" # nbg1 | fsn1 | hel1 | ash | hil
+control_plane_type = "cx23"
+agent_type         = "cx33"
+agent_count        = 2
+image              = "ubuntu-24.04"
+
+# ── Access ───────────────────────────────────────────────────────────────────
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+# Lock SSH to your IP, e.g. ["203.0.113.4/32"]. Default is open — change it.
+admin_ssh_cidrs = ["0.0.0.0/0", "::/0"]
+
+# ── Apps / ingress ───────────────────────────────────────────────────────────
+domain            = "health.example.com" # must resolve to the LB IP (output after apply)
+letsencrypt_email = "you@example.com"
+
+# Two-phase apply: set install_apps=false for the first apply (cluster only),
+# then true (default) for the second. See providers.tf.
+install_apps    = true
+kubeconfig_path = "./kubeconfig"

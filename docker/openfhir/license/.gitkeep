@@ -1,0 +1,9 @@
+# Place the vendor-provided openFHIR license here as:
+#     openfhir-license.json
+#
+# It is mounted into the openfhir container at /app/openfhir-license.json
+# (see docker-compose.yml). REQUIRED — the engine will not start without it,
+# and the stack has no hosted-sandbox fallback.
+#
+# Request a license at https://open-fhir.com#access
+# openfhir-license.json is gitignored (vendor secret, never committed).

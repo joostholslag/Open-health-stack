@@ -1,0 +1,50 @@
+# ============================================================================
+# Dev values — kind / minikube (replaces k8s/overlays/dev).
+#   - Default storage class, small PVCs (base sizes).
+#   - Plain HTTP ingress at a localhost wildcard-DNS host.
+#   - HAPI Service as NodePort 30080 for quick smoke tests without an ingress.
+#   - Locally-built images tagged `local` (no registry).
+#   - secrets.create=true renders placeholder credentials for convenience.
+#     NEVER use this file in a real environment.
+#
+#   helm upgrade --install health-stack charts/health-stack \
+#     -n health-stack --create-namespace \
+#     -f charts/health-stack/values-dev.yaml
+# ============================================================================
+
+storage:
+  className: ""   # cluster default (kind provides `standard`)
+
+ingress:
+  # nip.io wildcard resolves to localhost — works with an ingress-nginx on kind,
+  # otherwise port-forward the hapi Service (or use its NodePort below).
+  host: health.127.0.0.1.nip.io
+  tls:
+    enabled: false
+
+# Locally-built images (see `make build`); `local` tag, pulled from the node.
+images:
+  hapi:
+    repository: openfhir/hapi-openfhir
+    tag: local
+    pullPolicy: IfNotPresent
+  ipsMappings:
+    repository: openfhir/fhirconnect-ips-mappings
+    tag: local
+    pullPolicy: IfNotPresent
+
+# Expose HAPI as NodePort 30080 for quick smoke tests without an ingress.
+hapi:
+  service:
+    type: NodePort
+    nodePort: 30080
+
+# Dev convenience: render the example Secrets so pods start without extra steps.
+#
+# NOTE: the vendor `openfhir-license` Secret is NEVER rendered by the chart — it
+# holds a licensed artifact. Even on kind you must create it out-of-band or the
+# openFHIR engine will not start:
+#   kubectl create secret generic openfhir-license -n health-stack \
+#     --from-file=openfhir-license.json=./docker/openfhir/license/openfhir-license.json
+secrets:
+  create: true

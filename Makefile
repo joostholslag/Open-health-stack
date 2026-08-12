@@ -1,0 +1,170 @@
+# freshehr-open-health-stack — one entrypoint for all three IaC layers.
+# Run `make help` for the list.
+
+SHELL := /bin/bash
+DOCKER_DIR := docker
+CHART := charts/health-stack
+NS := health-stack
+
+# Which chart values file to use for the helm targets (hetzner|dev).
+ENV ?= hetzner
+# Only one cloud is supported (Hetzner k3s); see terraform/envs/.
+TF_ENV := terraform/envs/hetzner
+
+# Docker Hub org + tag for the two custom images (see `make images`).
+IMAGE_ORG ?= openfhir
+IMAGE_TAG ?= latest
+
+# Extra args for `docker compose`.
+PROFILE ?=
+COMPOSE := docker compose -f $(DOCKER_DIR)/docker-compose.yml $(PROFILE)
+
+.DEFAULT_GOAL := help
+
+## ── Layer 1: docker-compose ──────────────────────────────────────────────────
+
+.PHONY: env
+env: ## Create docker/.env from .env.example if missing
+	@test -f $(DOCKER_DIR)/.env || (cp .env.example $(DOCKER_DIR)/.env && echo "Created $(DOCKER_DIR)/.env — edit it before `make up`.")
+
+.PHONY: certs
+certs: ## Generate self-signed dev TLS certs for the compose nginx
+	@mkdir -p $(DOCKER_DIR)/nginx/certs
+	openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+		-keyout $(DOCKER_DIR)/nginx/certs/tls.key \
+		-out    $(DOCKER_DIR)/nginx/certs/tls.crt \
+		-subj   "/CN=localhost" \
+		-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+	@echo "Wrote $(DOCKER_DIR)/nginx/certs/tls.{crt,key}"
+
+.PHONY: build
+build: ## Build the custom HAPI image (layers the interceptor JAR)
+	$(COMPOSE) build hapi
+
+.PHONY: up
+up: env certs ## Bring up the whole compose stack (5 services)
+	$(COMPOSE) up -d
+
+.PHONY: down
+down: ## Stop the compose stack (keeps volumes)
+	$(COMPOSE) down
+
+.PHONY: destroy
+destroy: ## Stop the compose stack AND delete volumes (data loss)
+	$(COMPOSE) down -v
+
+.PHONY: ps
+ps: ## Show compose service status
+	$(COMPOSE) ps
+
+.PHONY: logs
+logs: ## Tail logs from all compose services
+	$(COMPOSE) logs -f --tail=100
+
+.PHONY: config
+config: ## Validate + render the merged compose config
+	$(COMPOSE) config
+
+.PHONY: images
+images: ## Build both custom images (IMAGE_ORG/IMAGE_TAG override the defaults)
+	@# hapi-openfhir needs the interceptor JAR in docker/hapi/extra-classes/ first.
+	@test -n "$$(ls $(DOCKER_DIR)/hapi/extra-classes/*.jar 2>/dev/null)" || { echo "ERROR: no interceptor JAR in $(DOCKER_DIR)/hapi/extra-classes/ — see README blockers"; exit 1; }
+	docker build -t $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG) $(DOCKER_DIR)/hapi
+	docker build -f $(DOCKER_DIR)/openfhir/bootstrap.Dockerfile -t $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG) $(DOCKER_DIR)/openfhir
+	@echo "Built: $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)  $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG)"
+
+.PHONY: images-push
+images-push: images ## Build then push both images to Docker Hub (needs `docker login`)
+	docker push $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)
+	docker push $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG)
+
+.PHONY: template
+template: ## Upload the IPS operational template (OPT) into EHRbase (required once per fresh CDR)
+	@# openFHIR bootstraps the OPT into its own store, but EHRbase needs it too —
+	@# without it a composition store fails with 422 "Could not retrieve template
+	@# for template Id: International Patient Summary". Idempotent: re-running an
+	@# existing template returns 409, which is fine.
+	@curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
+		-X POST http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4 \
+		-H 'Content-Type: application/xml' -H 'Accept: application/xml' \
+		--data-binary @"$(DOCKER_DIR)/openfhir/bootstrap/International Patient Summary.opt" \
+		-o /dev/null -w "  upload OPT -> HTTP %{http_code}\n"
+	@echo "  templates in EHRbase:"; curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
+		-H 'Accept: application/json' \
+		http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4
+
+.PHONY: smoke
+smoke: ## Run health curls against the running compose stack
+	@echo "── HAPI ──";     curl -fsS http://localhost:8080/fhir/metadata      >/dev/null && echo "OK CapabilityStatement" || echo "FAIL"
+	@echo "── EHRbase ──";  curl -fsS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} http://localhost:8082/ehrbase/rest/status >/dev/null && echo "OK status" || echo "FAIL"
+	@echo "── nginx ──";    curl -fsSk https://localhost/fhir/metadata        >/dev/null && echo "OK proxied FHIR" || echo "FAIL"
+
+## ── Layer 2: Kubernetes (Helm chart) ─────────────────────────────────────────
+## Set ENV=hetzner|dev (default hetzner). Local iteration uses values-dev.
+
+.PHONY: helm-lint
+helm-lint: ## Lint the chart (default + each values file)
+	helm lint $(CHART)
+	@for f in hetzner dev; do echo "── $$f ──"; helm lint $(CHART) -f $(CHART)/values-$$f.yaml; done
+
+.PHONY: helm-render
+helm-render: ## Render the chart to stdout (ENV=hetzner|dev)
+	helm template health-stack $(CHART) -n $(NS) -f $(CHART)/values-$(ENV).yaml
+
+.PHONY: helm-dev
+helm-dev: ## Install the chart on kind/minikube (values-dev; placeholder secrets + openfhir-license required)
+	helm upgrade --install health-stack $(CHART) -n $(NS) --create-namespace \
+		-f $(CHART)/values-dev.yaml
+
+.PHONY: helm-install
+helm-install: ## Install the chart (ENV=hetzner|dev; needs real Secrets pre-created; set DOMAIN=...)
+	helm upgrade --install health-stack $(CHART) -n $(NS) --create-namespace \
+		-f $(CHART)/values-$(ENV).yaml $(if $(DOMAIN),--set ingress.host=$(DOMAIN),)
+	@echo "Standalone install: create Secrets from $(CHART)/secrets.example.yaml + the openfhir-license Secret."
+	@echo "(Via Terraform on Hetzner they are generated for you — see README > Credentials.)"
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Uninstall the chart release
+	helm uninstall health-stack -n $(NS)
+
+.PHONY: k8s-status
+k8s-status: ## Show pods in the health-stack namespace
+	kubectl get pods -n $(NS) -o wide
+
+## ── Layer 3: Terraform (per-cloud env) ───────────────────────────────────────
+## Hetzner k3s only. Runs in terraform/envs/hetzner.
+
+.PHONY: tf-init
+tf-init: ## terraform init
+	cd $(TF_ENV) && terraform init
+
+.PHONY: tf-plan
+tf-plan: ## terraform plan
+	cd $(TF_ENV) && terraform plan
+
+.PHONY: tf-cluster
+tf-cluster: ## Phase 1: provision the cluster only (install_apps=false)
+	cd $(TF_ENV) && terraform apply -var 'install_apps=false'
+
+.PHONY: tf-apply
+tf-apply: ## Phase 2: install add-ons + the health-stack chart (install_apps=true)
+	cd $(TF_ENV) && terraform apply
+
+.PHONY: tf-destroy
+tf-destroy: ## Tear down all infrastructure
+	cd $(TF_ENV) && terraform destroy
+
+.PHONY: tf-fmt
+tf-fmt: ## Format all terraform files (shared modules + all envs)
+	cd terraform && terraform fmt -recursive
+
+.PHONY: tf-validate
+tf-validate: ## Validate the terraform configuration
+	cd $(TF_ENV) && terraform validate
+
+## ── Meta ─────────────────────────────────────────────────────────────────────
+
+.PHONY: help
+help: ## Show this help
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'

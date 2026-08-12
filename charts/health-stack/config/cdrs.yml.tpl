@@ -1,0 +1,35 @@
+# CDR connection registry for the openFHIR HAPI interceptor.
+# Mounted at /etc/cdrs.yml (matches interceptor.cdrs-config-file).
+#
+# The `local` CDR is the EHRbase container in this compose stack. Additional
+# remote CDRs (OAuth2 / basic) can be added following the shapes below.
+
+- id: local
+  name: EHRbase (local)
+  baseUrl: http://ehrbase:8080/ehrbase/rest
+  authMethod: basic
+  basicAuth:
+    username: __EHRBASE_AUTH_USER__
+    password: __EHRBASE_AUTH_PASSWORD__
+
+# ── Examples of additional remote CDRs (disabled; edit and uncomment) ────────
+#
+# - id: remote-oauth2
+#   name: Remote CDR (OAuth2)
+#   baseUrl: https://cdr.example.com/rest
+#   authMethod: oauth2
+#   oauth2:
+#     tokenUrl: https://auth.example.com/oauth/token
+#     clientId: my-client-id
+#     clientSecret: my-client-secret
+#     authMethod: basic
+#     extraParams:
+#       audience: https://cdr.example.com/openehr/v1
+#
+# - id: remote-basic
+#   name: Remote CDR (Basic Auth)
+#   baseUrl: https://cdr2.example.com/rest
+#   authMethod: basic
+#   basicAuth:
+#     username: my-username
+#     password: my-password

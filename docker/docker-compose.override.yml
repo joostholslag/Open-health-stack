@@ -1,0 +1,21 @@
+# Dev overrides — auto-merged by `docker compose` when present.
+# Adds JVM remote-debug ports and enables the debug agent. Delete/rename this
+# file (e.g. to docker-compose.override.yml.disabled) to run "prod-like".
+#
+# Note: this does NOT start the local openFHIR engine — that lives behind the
+# Run `docker compose up -d` to bring the stack up.
+
+services:
+  hapi:
+    ports:
+      - "5005:5005"          # JVM remote debug (JDWP)
+    environment:
+      # Attach a debugger to localhost:5005. suspend=n so HAPI boots normally.
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+
+  # Expose the openFHIR engine's debug/extra port too when the profile is up.
+  openfhir:
+    environment:
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5006"
+    ports:
+      - "5006:5006"

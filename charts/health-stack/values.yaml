@@ -1,0 +1,217 @@
+# ============================================================================
+# health-stack — default values
+# ----------------------------------------------------------------------------
+# Environment files layer on top:
+#   -f values-hetzner.yaml   (hcloud-volumes storage, prod HAPI sizing, TLS)
+#   -f values-dev.yaml       (kind: NodePort, nip.io host, no TLS, local images)
+#
+# Everything an environment actually varies lives in `global`, `ingress`, `images`,
+# `storage`, and per-service `resources` — that is the entire portability surface.
+# Targeting another cloud means one new values file (mostly `storage.className`);
+# the templates never branch on the provider.
+# ============================================================================
+
+global:
+  # Namespace is created by Kustomize/Helm via `--create-namespace` OR by this
+  # chart when `namespace.create=true`. Kept as a value so templates can label
+  # resources consistently; the release namespace still comes from `helm -n`.
+  partOf: freshehr-open-health-stack
+
+# The chart installs into the release namespace (helm -n <ns>). Optionally it can
+# also render a Namespace object (useful when Terraform installs it and wants the
+# namespace owned by the release). Default false — most flows use `helm -n ... --create-namespace`.
+namespace:
+  create: false
+  name: health-stack
+
+# ── Storage ──────────────────────────────────────────────────────────────────
+# Postgres PVCs use this class. "" = cluster default (kind/dev).
+#   hetzner: hcloud-volumes  (other clouds: e.g. gp3 on EKS, managed-csi on AKS)
+storage:
+  className: ""
+
+# ── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  host: health.local
+  # Prefix-strip rewrite handled by ingress-nginx (mirrors docker/nginx/nginx.conf).
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # openEHR operational templates are large XML (the IPS OPT is ~3 MB) and FHIR
+    # bundles can be too. ingress-nginx defaults to a 1 MB body limit, which returns
+    # 413 on the OPT upload — and then every composition store fails 422 because the
+    # template was never registered. 0 = no limit; set a real ceiling if exposed.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  tls:
+    enabled: false
+    # cert-manager ClusterIssuer name; the chart can also render the ClusterIssuer
+    # itself (see clusterIssuer.* below) for a one-shot install.
+    clusterIssuer: letsencrypt-prod
+    secretName: health-stack-tls
+
+# Optionally render a cert-manager ClusterIssuer (Let's Encrypt HTTP-01 via nginx).
+# Requires cert-manager installed in the cluster (Terraform k8s-apps does this).
+clusterIssuer:
+  create: false
+  name: letsencrypt-prod
+  email: admin@example.com
+  server: https://acme-v02.api.letsencrypt.org/directory
+  ingressClass: nginx
+
+# ── Images ───────────────────────────────────────────────────────────────────
+# Custom images (built in CI) get pinned per environment; upstream images have
+# sensible defaults matching the compose/base topology.
+images:
+  # HAPI FHIR + the openFHIR interceptor JAR (built from docker/hapi/Dockerfile).
+  hapi:
+    repository: openfhir/hapi-openfhir
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Data-only image: the IPS FHIRConnect mappings + OPT, copied into the openFHIR
+  # pod by an initContainer (built from docker/openfhir/bootstrap.Dockerfile).
+  ipsMappings:
+    repository: openfhir/fhirconnect-ips-mappings
+    tag: latest
+    pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# By default the chart does NOT create Secrets (they hold credentials + the
+# openFHIR license). It only references them by name — create them out-of-band;
+# see charts/health-stack/secrets.example.yaml for a template. For dev convenience
+# you can flip `create: true` to render the example values (NEVER do this in prod).
+secrets:
+  create: false
+  # When create=true these placeholder values are rendered. Match secrets.example.yaml.
+  values:
+    postgres:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      EHRBASE_USER: ehrbase_restricted
+      EHRBASE_PASSWORD: ehrbase_restricted
+      EHRBASE_USER_ADMIN: ehrbase
+      EHRBASE_PASSWORD_ADMIN: ehrbase
+    ehrbase:
+      SECURITY_AUTHTYPE: BASIC
+      # Basic-auth identity EHRbase enforces on its REST API. MUST match the
+      # credentials cdrs.yml gives the interceptor (rendered from the same values).
+      SECURITY_AUTHUSER: ehrbase-user
+      SECURITY_AUTHPASSWORD: ""
+      DB_USER: ehrbase_restricted
+      DB_PASS: ehrbase_restricted
+      DB_USER_ADMIN: ehrbase
+      DB_PASS_ADMIN: ehrbase
+      SERVER_NODENAME: local.ehrbase.org
+    hapi:
+      HAPI_DB_USER: hapi
+      HAPI_DB_PASS: hapi
+    openfhir:
+      OPENFHIR_DB_USER: openfhir
+      OPENFHIR_DB_PASS: openfhir
+
+# The Secret name each workload references. Override only if you pre-create
+# Secrets under different names.
+secretNames:
+  postgres: postgres-secret
+  ehrbase: ehrbase-secret
+  hapi: hapi-secret
+  openfhir: openfhir-secret
+  openfhirLicense: openfhir-license
+
+# Shared Postgres image used by the wait-for-postgres initContainers.
+initPostgresImage: postgres:16-alpine
+
+# ── HAPI ─────────────────────────────────────────────────────────────────────
+hapi:
+  enabled: true
+  replicas: 1
+  image: {}            # falls back to .Values.images.hapi
+  # Non-secret env (was the hapi-env ConfigMap). Points at the in-cluster engine.
+  env:
+    OPENFHIR_BASE_URL: http://openfhir:8080
+    HAPI_FHIR_IPS_ENABLED: "true"
+  resources: {}
+  readiness:
+    path: /fhir/metadata
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    failureThreshold: 30
+  liveness:
+    path: /fhir/metadata
+    initialDelaySeconds: 150
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    port: 8080
+    nodePort: null
+
+# ── EHRbase ──────────────────────────────────────────────────────────────────
+ehrbase:
+  enabled: true
+  replicas: 1
+  image:
+    repository: ehrbase/ehrbase
+    tag: latest
+    pullPolicy: IfNotPresent
+  env:
+    DB_URL: jdbc:postgresql://postgres:5432/ehrbase
+    SPRING_PROFILES_ACTIVE: local
+  resources: {}
+  readiness:
+    path: /ehrbase/rest/status
+    initialDelaySeconds: 40
+    periodSeconds: 10
+    failureThreshold: 30
+  liveness:
+    path: /ehrbase/rest/status
+    initialDelaySeconds: 120
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    port: 8080
+
+# ── openFHIR engine ──────────────────────────────────────────────────────────
+openfhir:
+  replicas: 1
+  # openfhir-enterprise, NOT openfhir: the Postgres repository implementation
+  # (openfhir.db.type=postgres) ships only in the enterprise engine. The community
+  # openfhir image is Mongo-only and fails with "No qualifying bean of type
+  # FhirConnectModelRepository" under a postgres config.
+  image:
+    repository: openfhir/openfhir-enterprise
+    tag: latest
+    pullPolicy: IfNotPresent
+  # IPS mappings initContainer image. Empty = fall back to .Values.images.ipsMappings.
+  mappingsImage: {}
+  resources: {}
+  readiness:
+    path: /health
+    initialDelaySeconds: 40
+    periodSeconds: 10
+    failureThreshold: 30
+  liveness:
+    path: /health
+    initialDelaySeconds: 120
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    port: 8080
+
+# ── Postgres backends ────────────────────────────────────────────────────────
+# ONE Postgres shared by EHRbase, HAPI and openFHIR (a database each). Must stay on
+# the ehrbase vendor image — EHRbase needs the extensions/roles it pre-provisions;
+# the other two just need an empty database. Non-production choice; see README.
+postgres:
+  image:
+    repository: ehrbase/ehrbase-v2-postgres
+    tag: "16.2"
+    pullPolicy: IfNotPresent
+  storage: 5Gi
+  resources: {}
+
+# Common pod scheduling knobs applied to every workload (override per-service
+# via that service's own block if needed later).
+nodeSelector: {}
+tolerations: []
+affinity: {}

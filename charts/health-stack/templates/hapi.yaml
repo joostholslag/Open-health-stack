@@ -1,0 +1,94 @@
+{{- if .Values.hapi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hapi
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hapi") | nindent 4 }}
+spec:
+  replicas: {{ .Values.hapi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "hapi") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hapi") | nindent 8 }}
+      annotations:
+        {{- include "health-stack.configChecksum" (dict "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      initContainers:
+        # HAPI's JPA store lives in the `hapi` DB inside the shared postgres.
+        {{- include "health-stack.waitForPostgres" (dict "ctx" . "host" "postgres" "user" "postgres" "userFromEnv" false) | nindent 8 }}
+      containers:
+        - name: hapi
+          # Custom HAPI image (official HAPI + openFHIR interceptor JAR), pinned
+          # per environment via .Values.images.hapi (or .Values.hapi.image).
+          image: {{ include "health-stack.image" (dict "image" .Values.hapi.image "fallback" .Values.images.hapi) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.hapi.image "fallback" .Values.images.hapi) }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- range $k, $v := .Values.hapi.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretNames.hapi }}    # HAPI_DB_*
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/application.yml
+              subPath: application.yml
+              readOnly: true
+            - name: cdrs
+              mountPath: /etc/cdrs.yml
+              subPath: cdrs.yml
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.hapi.readiness.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.hapi.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.hapi.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.hapi.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.hapi.liveness.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.hapi.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.hapi.liveness.periodSeconds }}
+          {{- with .Values.hapi.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: hapi-config        # application.yml (no credentials)
+        - name: cdrs
+          secret:
+            # Carries the EHRbase basic-auth the interceptor uses — a Secret, not
+            # a ConfigMap, because it contains a credential.
+            secretName: hapi-cdrs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hapi
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hapi") | nindent 4 }}
+spec:
+  type: {{ .Values.hapi.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "hapi") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.hapi.service.port }}
+      targetPort: 8080
+      {{- if and (eq .Values.hapi.service.type "NodePort") .Values.hapi.service.nodePort }}
+      nodePort: {{ .Values.hapi.service.nodePort }}
+      {{- end }}
+{{- end }}

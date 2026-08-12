@@ -1,0 +1,3 @@
+- create a dockerized environment similar to that of ~/development/OPENFHIR/converge-and-collaborate-dublin-hackaton (things set up at the end) - meaning ehrbase, openfhir, keycloak, hapi (not firely), nginx, ....
+- needs to leverage kubernetes
+- needs to have infra-as-code for setup on Hetzner and similar

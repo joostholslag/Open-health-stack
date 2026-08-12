@@ -1,0 +1,19 @@
+# Patterns to ignore when packaging the chart.
+.DS_Store
+.git/
+.gitignore
+*.tmproj
+*.bak
+*.orig
+*~
+# CI/editor cruft
+.vscode/
+.idea/
+# Local render output
+_rendered/
+*.local.yaml
+# Example secrets live at the chart ROOT for reference but must never be packaged
+# or applied as-is. Anchored with a leading "/" so these DON'T match
+# templates/secrets.yaml (helmignore patterns otherwise match by basename anywhere).
+/secrets.example.yaml
+/secrets.yaml

@@ -1,0 +1,56 @@
+# ── Secrets & environment ───────────────────────────────────────────────
+.env
+*.env
+!.env.example
+secrets.yaml
+secrets.yml
+!secrets.example.yaml
+!secrets.example.yml
+
+# ── openFHIR license (vendor-provided, never commit) ────────────────────
+docker/openfhir/license/*.json
+openfhir-license.json
+
+# ── HAPI interceptor JAR (build input, documented but not committed) ────
+docker/hapi/extra-classes/*.jar
+
+# ── TLS certs (self-signed dev certs, generated locally) ────────────────
+docker/nginx/certs/*.crt
+docker/nginx/certs/*.key
+docker/nginx/certs/*.pem
+*.crt
+*.key
+*.pem
+!**/tls.example.*
+
+# ── Terraform ───────────────────────────────────────────────────────────
+*.tfvars
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+# .terraform.lock.hcl is deliberately NOT ignored — commit it so provider
+# versions are pinned and reproducible across machines and CI (HashiCorp's
+# own recommendation). Refresh it with `terraform init -upgrade`.
+
+# ── Kubernetes ──────────────────────────────────────────────────────────
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+k8s/base/secrets.yaml
+k8s/base/secrets.yml
+
+# ── Java / build artifacts ──────────────────────────────────────────────
+*.class
+*.log
+target/
+hs_err_pid*
+replay_pid*
+
+# ── Editor / OS ─────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+*.swp

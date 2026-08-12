@@ -1,0 +1,70 @@
+# ============================================================================
+# Hetzner (prod) values — k3s on hcloud.
+# Reproduces k8s/overlays/hetzner: hcloud-volumes storage, real host + TLS via
+# cert-manager, larger Postgres PVCs, production HAPI sizing/replicas.
+#
+#   helm upgrade --install health-stack charts/health-stack \
+#     -n health-stack --create-namespace \
+#     -f charts/health-stack/values-hetzner.yaml \
+#     --set ingress.host=health.yourdomain.com
+# ============================================================================
+
+# The openFHIR engine always runs in-cluster. It REQUIRES the 'openfhir-license'
+# Secret — the engine will not start without it. Create it out-of-band:
+#   kubectl create secret generic openfhir-license -n health-stack \
+#     --from-file=openfhir-license.json=./docker/openfhir/license/openfhir-license.json
+
+storage:
+  className: hcloud-volumes
+
+ingress:
+  # Replace with your real DNS (must resolve to the hcloud load balancer IP).
+  host: health.example.com
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+    secretName: health-stack-tls
+
+# Let cert-manager + this ClusterIssuer be created by the chart if Terraform
+# didn't already create one. (Terraform's k8s-apps installs cert-manager itself;
+# leave create=false if you let Terraform own the issuer.)
+clusterIssuer:
+  create: false
+  name: letsencrypt-prod
+  email: you@example.com
+
+# Pin production image tags (CI pushes immutable tags — replace :latest).
+images:
+  hapi:
+    repository: openfhir/hapi-openfhir
+    tag: v0.1.0
+  ipsMappings:
+    repository: openfhir/fhirconnect-ips-mappings
+    tag: v0.1.0
+
+# Production HAPI sizing (matches patch-hapi-resources.yaml) + point HAPI at the
+# in-cluster openFHIR engine (local mode).
+hapi:
+  replicas: 2
+  env:
+    OPENFHIR_BASE_URL: http://openfhir:8080
+    HAPI_FHIR_IPS_ENABLED: "true"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+# Larger Postgres volumes for prod (matches patch-postgres-storage.yaml: 20Gi).
+postgres:
+  ehrbase:
+    storage: 20Gi
+  openfhir:
+    storage: 20Gi
+
+# Secrets are created out-of-band in prod (secret manager / sealed-secrets /
+# External Secrets). Keep create=false.
+secrets:
+  create: false

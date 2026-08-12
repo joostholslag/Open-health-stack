@@ -1,0 +1,11 @@
+# Self-signed dev TLS certs for the compose nginx go here as tls.crt / tls.key.
+# Both are gitignored. Generate them with (from repo root):
+#
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+#     -keyout docker/nginx/certs/tls.key \
+#     -out    docker/nginx/certs/tls.crt \
+#     -subj   "/CN=localhost" \
+#     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+#
+# `make certs` runs exactly this. Production TLS in k8s is handled by
+# cert-manager (hetzner overlay), not these files.

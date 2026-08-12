@@ -1,0 +1,55 @@
+#cloud-config
+# k3s control-plane bootstrap.
+# Templated vars: k3s_version, k3s_token, node_ip (private), flannel_iface.
+# The public IP (TLS SAN) is fetched at boot from the Hetzner metadata service,
+# since it isn't known to Terraform before the server exists.
+package_update: true
+packages:
+  - curl
+
+runcmd:
+  # Bring up the Hetzner private-network NIC. The hcloud cloud-init datasource only
+  # emits netplan config for the PUBLIC interface (eth0), so ${flannel_iface} exists
+  # but stays DOWN with no IPv4. k3s then dies with
+  #   "flannel exited: failed to find IPv4 address for interface ${flannel_iface}"
+  #   "failed to validate nodeIP: node IP ... not found in the host's network interfaces"
+  # Configure it for DHCP and wait until it actually has an address before k3s starts.
+  - |
+    cat > /etc/netplan/60-private.yaml <<'NETPLAN'
+    network:
+      version: 2
+      ethernets:
+        ${flannel_iface}:
+          dhcp4: true
+    NETPLAN
+    chmod 600 /etc/netplan/60-private.yaml
+    netplan apply
+    for i in $(seq 1 60); do
+      ip -o -4 addr show ${flannel_iface} 2>/dev/null | grep -q inet && break
+      sleep 2
+    done
+
+  # Discover this node's public IPv4 from the Hetzner metadata service.
+  - export PUBLIC_IP=$(curl -sf http://169.254.169.254/hetzner/v1/metadata/public-ipv4)
+  # Install k3s server. Disable the bundled Traefik + ServiceLB — we run
+  # ingress-nginx and a Hetzner LB instead. cloud-provider=external so the
+  # Hetzner CCM/CSI (installed by the k8s-apps module) manage nodes/volumes.
+  - |
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_CHANNEL="${k3s_version}" \
+      K3S_TOKEN="${k3s_token}" \
+      sh -s - server \
+        --disable traefik \
+        --disable servicelb \
+        --disable-cloud-controller \
+        --kubelet-arg=cloud-provider=external \
+        --node-ip=${node_ip} \
+        --node-external-ip=$PUBLIC_IP \
+        --advertise-address=${node_ip} \
+        --flannel-iface=${flannel_iface} \
+        --tls-san=$PUBLIC_IP \
+        --write-kubeconfig-mode=0644
+  # Signal readiness — Terraform's remote-exec polls for this file before it
+  # pulls the kubeconfig.
+  - until k3s kubectl get nodes >/dev/null 2>&1; do sleep 5; done
+  - touch /tmp/k3s-ready

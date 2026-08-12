@@ -1,0 +1,102 @@
+# Lint + render-check the health-stack chart on every change; package & push it
+# as an OCI artifact to GHCR on v* tags.
+#
+#   Install (consumers):
+#     helm install health-stack \
+#       oci://ghcr.io/<org>/charts/health-stack --version <x.y.z> \
+#       -f values-hetzner.yaml
+#
+# The chart version published equals the git tag (minus the leading 'v'), so
+# `v0.2.0` → chart 0.2.0. Keep charts/health-stack/Chart.yaml's version in sync
+# (the release job overrides it from the tag to be safe).
+name: helm-publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/helm-publish.yml"
+  pull_request:
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/helm-publish.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  CHART_DIR: charts/health-stack
+
+jobs:
+  # ── Lint + render every values file (catches template regressions) ──────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: helm lint (default + each values file)
+        run: |
+          set -e
+          helm lint "$CHART_DIR"
+          for f in hetzner dev; do
+            echo "── lint values-$f ──"
+            helm lint "$CHART_DIR" -f "$CHART_DIR/values-$f.yaml"
+          done
+
+      - name: helm template render-check
+        run: |
+          set -e
+          # Render must produce valid, non-empty YAML for both openFHIR modes and
+          # for each per-cloud values file.
+          render() {
+            echo "── template $* ──"
+            helm template health-stack "$CHART_DIR" -n health-stack "$@" \
+              | python3 -c 'import sys,yaml; d=[x for x in yaml.safe_load_all(sys.stdin) if x]; assert d, "empty render"; print(f"  {len(d)} objects OK")'
+          }
+          render
+          render --set secrets.create=true
+          for f in hetzner dev; do
+            render -f "$CHART_DIR/values-$f.yaml"
+          done
+
+  # ── Package + push OCI to GHCR on v* tags ───────────────────────────────────
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Derive chart version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: helm registry login (GHCR)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+
+      - name: Package chart (version + appVersion from tag)
+        run: |
+          helm package "$CHART_DIR" \
+            --version "${{ steps.ver.outputs.version }}" \
+            --app-version "${{ steps.ver.outputs.version }}" \
+            --destination dist
+
+      - name: Push chart to GHCR (OCI)
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          # Repo owner may be mixed-case; OCI refs must be lowercase.
+          OWNER_LC="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          helm push "dist/health-stack-${{ steps.ver.outputs.version }}.tgz" \
+            "oci://$REGISTRY/$OWNER_LC/charts"

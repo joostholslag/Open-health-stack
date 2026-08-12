@@ -1,0 +1,8 @@
+# Drop the openFHIR HAPI interceptor JAR here before `docker compose build hapi`.
+#
+# Source: https://github.com/openFHIR/openfhir-hapi-interceptor
+#   git clone https://github.com/openFHIR/openfhir-hapi-interceptor
+#   cd openfhir-hapi-interceptor && mvn clean package -DskipTests
+#   cp target/*.jar <this-repo>/docker/hapi/extra-classes/
+#
+# *.jar in this directory is gitignored (build artifact, not source).

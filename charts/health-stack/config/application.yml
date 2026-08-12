@@ -1,0 +1,65 @@
+# HAPI FHIR + openFHIR interceptor configuration.
+# Mounted read-only at /app/config/application.yml.
+#
+# Values default to the local docker-compose topology but honour env overrides
+# (${VAR:default}).
+spring:
+  datasource:
+    # HAPI's JPA store lives in the `hapi` DB, created by ehrbase/init-db.sql
+    # inside the single shared Postgres.
+    url: jdbc:postgresql://postgres:5432/hapi
+    username: ${HAPI_DB_USER:hapi}
+    password: ${HAPI_DB_PASS:hapi}
+    driverClassName: org.postgresql.Driver
+  jpa:
+    properties:
+      hibernate:
+        dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
+        search:
+          enabled: false
+
+hapi:
+  fhir:
+    fhir_version: R4
+    server_address: http://localhost:8080/fhir
+    # Load the openFHIR interceptor beans shipped in the extra-classes JAR.
+    custom_bean_packages: com.syntaric
+    custom_interceptor_classes: com.syntaric.hapi.PatientInterceptor
+
+# ── openFHIR engine ────────────────────────────────────────────────────────
+# The in-cluster engine (compose service / k8s Service `openfhir`). No oauth2
+# block: the interceptor only attempts a token request when token-url, client-id
+# AND client-secret are all non-blank (ClientCredentialsConfig.isComplete()), and
+# the local engine is unauthenticated. Adding partial OAuth config here makes
+# every store fail with "Token request failed ... invalid_client".
+openfhir:
+  base-url: ${OPENFHIR_BASE_URL:http://openfhir:8080}
+
+# ── Interceptor routing ──────────────────────────────────────────────────────
+interceptor:
+  # FHIR create → openEHR store. Any POST whose resource meta.profile matches
+  # one of these URLs is forwarded to the CDR via openFHIR.
+  fhir-create-filter:
+    intercepted-profiles:
+      - http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips
+
+  # FHIR query → openEHR query. Rules evaluated in order; first match wins.
+  # _resourceType matches the last path segment; * matches any non-absent value.
+  fhir-query-filter:
+    rules:
+      - template-id: EPS Patient Summary
+        fhir-query:
+          _resourceType: AllergyIntolerance
+      - template-id: International Patient Summary
+        fhir-query:
+          _resourceType: Condition
+          verification-status: confirmed
+      - template-id: International Patient Summary
+        fhir-query:
+          _resourceType: MedicationStatement
+
+  # CDR connection registry (EHRbase). See cdrs.yml.
+  cdrs-config-file: /etc/cdrs.yml
+
+  ips:
+    template-id: International Patient Summary

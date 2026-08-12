@@ -1,0 +1,108 @@
+{{- /*
+A single Postgres StatefulSet + headless Service, shared by EHRbase, HAPI and the
+openFHIR engine — one database each, created by config/init-db.sql.
+
+Non-production topology on purpose; see "Database topology" in the repo README.
+
+Storage class comes from .Values.storage.className ("" = cluster default, used
+by kind/dev; values-hetzner.yaml sets hcloud-volumes).
+
+NOTE: volumeClaimTemplates is immutable on an existing StatefulSet, so the
+storage class + size only take effect on FIRST install. Treat them as
+install-time values, not upgrade-time (documented in the chart README).
+*/ -}}
+{{- $storageClass := .Values.storage.className -}}
+# ── postgres (databases: ehrbase · hapi · openfhir) ──────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "postgres") | nindent 4 }}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "postgres") | nindent 8 }}
+      annotations:
+        {{- include "health-stack.configChecksum" (dict "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      containers:
+        - name: postgres
+          # Shared Postgres for EHRbase + HAPI. The ehrbase image pre-provisions
+          # the ehrbase schema; the mounted init SQL adds the `hapi` database.
+          image: {{ include "health-stack.image" (dict "image" .Values.postgres.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.postgres.image) }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretNames.postgres }}
+          env:
+            # Put the cluster in a SUBDIRECTORY of the mount, not the mount root.
+            # A real block-device PV (hcloud-volumes) is a formatted ext4 filesystem
+            # whose root contains lost+found, and initdb refuses a non-empty data
+            # directory: "directory /var/lib/postgresql/data exists but is not empty
+            # ... perhaps due to it being a mount point". Docker named volumes are
+            # plain directories, which is why compose never hits this.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d/02-tenants.sql
+              subPath: init-db.sql
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          {{- with .Values.postgres.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: init
+          secret:
+            # Contains CREATE USER ... PASSWORD statements — a Secret, not a ConfigMap.
+            secretName: postgres-init-sql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if $storageClass }}
+        storageClassName: {{ $storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "postgres") | nindent 4 }}
+spec:
+  clusterIP: None    # headless — stable DNS for the StatefulSet pod
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "postgres") | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

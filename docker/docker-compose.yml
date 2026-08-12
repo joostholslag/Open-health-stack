@@ -1,0 +1,182 @@
+# ============================================================================
+# freshehr-open-health-stack — Layer 1: local docker-compose
+# ----------------------------------------------------------------------------
+# The whole stack, self-contained: hapi (+openFHIR interceptor), ehrbase, the
+# openFHIR engine, ONE shared Postgres (a database each for ehrbase/hapi/openfhir),
+# and nginx.
+#
+# Everything runs in-cluster — there is no hosted-sandbox mode. The openFHIR engine
+# therefore REQUIRES the vendor license at openfhir/license/openfhir-license.json
+# (gitignored); request one at https://open-fhir.com#access.
+#
+# Usage:
+#   cp ../.env.example .env          # fill creds
+#   docker compose build hapi        # layers the interceptor JAR onto HAPI
+#   docker compose up -d             # all 5 services
+#   make template                    # once per fresh CDR: upload the IPS OPT to EHRbase
+# ============================================================================
+
+services:
+  # ── HAPI FHIR + openFHIR interceptor (FHIR facade) ────────────────────────
+  hapi:
+    build:
+      context: ./hapi
+    image: ${HAPI_IMAGE:-openfhir/hapi-openfhir:latest}
+    container_name: freshehr-hapi
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./hapi/application.yml:/app/config/application.yml:ro
+      - ./hapi/cdrs.yml:/etc/cdrs.yml:ro
+    environment:
+      HAPI_FHIR_IPS_ENABLED: ${HAPI_FHIR_IPS_ENABLED:-true}
+      HAPI_DB_USER: ${HAPI_DB_USER:-hapi}
+      HAPI_DB_PASS: ${HAPI_DB_PASS:-hapi}
+      # The in-cluster openFHIR engine. No OAuth: the interceptor only attempts a
+      # token request when token-url + client-id + client-secret are all non-blank
+      # (ClientCredentialsConfig.isComplete()), and the local engine needs none.
+      OPENFHIR_BASE_URL: ${OPENFHIR_BASE_URL:-http://openfhir:8080}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openfhir:
+        condition: service_healthy
+    # No container healthcheck: the hapiproject/hapi image is distroless — no shell,
+    # no curl, no wget — so any in-container probe is a dead end (the previous
+    # CMD-SHELL/curl check could never run and pinned the container to `unhealthy`
+    # while it was serving traffic normally). HAPI's readiness is verified from the
+    # host instead: `make smoke`, or GET /actuator/health (Spring Boot actuator,
+    # returns 200) / /fhir/metadata.
+    networks:
+      - health-stack
+
+  # ── EHRbase (openEHR CDR) ─────────────────────────────────────────────────
+  ehrbase:
+    image: ehrbase/ehrbase
+    container_name: freshehr-ehrbase
+    ports:
+      - "8082:8080"
+    environment:
+      SECURITY_AUTHTYPE: ${EHRBASE_SECURITY_AUTHTYPE:-BASIC}
+      # HTTP basic-auth identity EHRbase enforces on its REST API. Must match the
+      # credentials the HAPI interceptor uses in cdrs.yml (EHRBASE_AUTH_*).
+      SECURITY_AUTHUSER: ${EHRBASE_AUTH_USER:-ehrbase-user}
+      SECURITY_AUTHPASSWORD: ${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword}
+      DB_URL: jdbc:postgresql://postgres:5432/ehrbase
+      DB_USER: ${EHRBASE_DB_USER:-ehrbase_restricted}
+      DB_PASS: ${EHRBASE_DB_PASS:-ehrbase_restricted}
+      DB_USER_ADMIN: ${EHRBASE_DB_USER_ADMIN:-ehrbase}
+      DB_PASS_ADMIN: ${EHRBASE_DB_PASS_ADMIN:-ehrbase}
+      SERVER_NODENAME: ${EHRBASE_SERVER_NODENAME:-local.ehrbase.org}
+      SPRING_PROFILES_ACTIVE: local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The ehrbase image ships BusyBox wget only (no curl). /ehrbase/rest/status
+      # requires HTTP basic auth (SECURITY_AUTHTYPE=BASIC); pass the SECURITY_AUTH*
+      # creds inline. A successful fetch proves EHRbase + its DB are up.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://$${SECURITY_AUTHUSER}:$${SECURITY_AUTHPASSWORD}@localhost:8080/ehrbase/rest/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    networks:
+      - health-stack
+
+  # ── Shared Postgres (databases: ehrbase · hapi · openfhir) ────────────────
+  postgres:
+    image: ehrbase/ehrbase-v2-postgres:16.2
+    container_name: freshehr-postgres
+    ports:
+      - "5439:5432"
+    environment:
+      POSTGRES_USER: ${EHRBASE_PG_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${EHRBASE_PG_SUPERPASSWORD:-postgres}
+      EHRBASE_USER: ${EHRBASE_DB_USER:-ehrbase_restricted}
+      EHRBASE_PASSWORD: ${EHRBASE_DB_PASS:-ehrbase_restricted}
+      EHRBASE_USER_ADMIN: ${EHRBASE_DB_USER_ADMIN:-ehrbase}
+      EHRBASE_PASSWORD_ADMIN: ${EHRBASE_DB_PASS_ADMIN:-ehrbase}
+    volumes:
+      # 02- prefix ⇒ runs after the image's own ehrbase schema bootstrap.
+      - ./ehrbase/init-db.sql:/docker-entrypoint-initdb.d/02-tenants.sql:ro
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone is a FALSE POSITIVE on first boot: it reports ready
+      # while /docker-entrypoint-initdb.d/*.sql are still running against the
+      # temporary local-only server, which then restarts. Dependents that start in
+      # that window die with "The connection attempt failed". Probing for the last
+      # database our init script creates proves the bootstrap actually finished.
+      test: ["CMD-SHELL", "psql -U $${POSTGRES_USER} -lqt | cut -d'|' -f1 | grep -qw openfhir"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - health-stack
+
+  # ── openFHIR engine (FHIR ⇄ openEHR mapping) ──────────────────────────────
+  openfhir:
+    # openfhir-enterprise, NOT openfhir: the Postgres repository implementation
+    # (openfhir.db.type=postgres) ships only in the enterprise engine. The community
+    # openfhir image is Mongo-only, so it fails with "No qualifying bean of type
+    # FhirConnectModelRepository" under a postgres config.
+    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:latest}
+    container_name: freshehr-openfhir
+    ports:
+      - "8083:8080"
+    environment:
+      # The engine reads Spring's standard datasource keys; application.yaml
+      # interpolates OPENFHIR_DB_USER/PASS into spring.datasource.*.
+      OPENFHIR_DB_USER: ${OPENFHIR_DB_USER:-openfhir}
+      OPENFHIR_DB_PASS: ${OPENFHIR_DB_PASS:-openfhir}
+    volumes:
+      # MUST be /app/application.yaml — WorkingDir=/app, so Spring Boot reads
+      # ./application.yaml from there. Mounting at / is silently ignored.
+      - ./openfhir/application.yaml:/app/application.yaml:ro
+      - ./openfhir/bootstrap:/app/bootstrap:ro
+      # License is vendor-provided + gitignored; required for the local engine.
+      - ./openfhir/license/openfhir-license.json:/app/openfhir-license.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    networks:
+      - health-stack
+
+  # ── nginx reverse proxy + TLS ─────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: freshehr-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - hapi
+      - ehrbase
+      - openfhir
+    healthcheck:
+      # Use 127.0.0.1 (not "localhost", which may resolve to ::1 first) so the
+      # check hits the IPv4 :443 listener nginx binds.
+      test: ["CMD-SHELL", "curl -fsSk https://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks:
+      - health-stack
+
+volumes:
+  db-data:
+
+networks:
+  health-stack:
+    driver: bridge

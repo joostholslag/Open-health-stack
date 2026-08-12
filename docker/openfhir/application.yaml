@@ -1,0 +1,35 @@
+# openFHIR engine configuration (LOCAL mode only).
+# Mounted at /app/application.yaml — the image has WorkingDir=/app and starts with
+# `java -jar app.jar`, so Spring Boot picks up ./application.yaml from there. Mounting
+# it at / silently does nothing (the engine then falls back to its baked-in defaults,
+# which point at Mongo).
+#
+# Shape mirrors the vendor's own Postgres config at
+# openfhir-enterprise/etc/sandbox/application.yaml — note every engine setting is
+# nested under `openfhir:` (`openfhir.db.type` is read via @ConditionalOnProperty in
+# RepositoryProducers.java; a top-level `db.type` is ignored).
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/openfhir
+    username: ${OPENFHIR_DB_USER:openfhir}
+    password: ${OPENFHIR_DB_PASS:openfhir}
+
+server:
+  port: 8080
+  error:
+    include-stacktrace: never
+    include-message: always
+
+openfhir:
+  # postgres | mongo — this stack runs Postgres (the shared `postgres` service).
+  db:
+    type: postgres
+
+  # Vendor-provided license (gitignored). Without it the engine will not start.
+  # Request at https://open-fhir.com#access
+  license: /app/openfhir-license.json
+
+  # FHIRConnect mappings + OPT loaded at startup from the mounted bootstrap dir.
+  bootstrap:
+    dir: /app/bootstrap
+    recursively-open-directories: true

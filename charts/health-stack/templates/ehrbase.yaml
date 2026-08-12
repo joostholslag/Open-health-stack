@@ -1,0 +1,82 @@
+{{- if .Values.ehrbase.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ehrbase
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "ehrbase") | nindent 4 }}
+spec:
+  replicas: {{ .Values.ehrbase.replicas }}
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "ehrbase") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "ehrbase") | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      # EHRbase needs its Postgres schema ready before it boots. The wait uses
+      # the admin user from the ehrbase Secret ($DB_USER_ADMIN).
+      initContainers:
+        {{- include "health-stack.waitForPostgres" (dict "ctx" . "host" "postgres" "user" "DB_USER_ADMIN" "userFromEnv" true "secretName" .Values.secretNames.ehrbase) | nindent 8 }}
+      containers:
+        - name: ehrbase
+          image: {{ include "health-stack.image" (dict "image" .Values.ehrbase.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.ehrbase.image) }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- range $k, $v := .Values.ehrbase.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretNames.ehrbase }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.ehrbase.readiness.path }}
+              port: 8080
+              httpHeaders:
+                # /ehrbase/rest/status sits behind basic auth (SECURITY_AUTHTYPE=BASIC),
+                # so an unauthenticated probe gets 401 and the kubelet restart-loops a
+                # perfectly healthy pod. Send the same credentials the Secret sets.
+                - name: Authorization
+                  value: {{ printf "%s:%s" (default "ehrbase-user" .Values.secrets.values.ehrbase.SECURITY_AUTHUSER) (default "" .Values.secrets.values.ehrbase.SECURITY_AUTHPASSWORD) | b64enc | printf "Basic %s" | quote }}
+            initialDelaySeconds: {{ .Values.ehrbase.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.ehrbase.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.ehrbase.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.ehrbase.liveness.path }}
+              port: 8080
+              httpHeaders:
+                # /ehrbase/rest/status sits behind basic auth (SECURITY_AUTHTYPE=BASIC),
+                # so an unauthenticated probe gets 401 and the kubelet restart-loops a
+                # perfectly healthy pod. Send the same credentials the Secret sets.
+                - name: Authorization
+                  value: {{ printf "%s:%s" (default "ehrbase-user" .Values.secrets.values.ehrbase.SECURITY_AUTHUSER) (default "" .Values.secrets.values.ehrbase.SECURITY_AUTHPASSWORD) | b64enc | printf "Basic %s" | quote }}
+            initialDelaySeconds: {{ .Values.ehrbase.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.ehrbase.liveness.periodSeconds }}
+          {{- with .Values.ehrbase.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ehrbase
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "ehrbase") | nindent 4 }}
+spec:
+  type: {{ .Values.ehrbase.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "ehrbase") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.ehrbase.service.port }}
+      targetPort: 8080
+{{- end }}

@@ -1,0 +1,99 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "health-stack") | nindent 4 }}
+  annotations:
+    # NOTE: no rewrite-target here on purpose — HAPI and EHRbase genuinely serve
+    # under /fhir and /ehrbase, so their paths pass through untouched (same as the
+    # compose nginx). Only openFHIR needs its prefix stripped, and a rewrite-target
+    # is per-Ingress, not per-path — so that route lives in its own Ingress below.
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /fhir
+            pathType: Prefix
+            backend:
+              service:
+                name: hapi
+                port:
+                  number: {{ .Values.hapi.service.port }}
+          - path: /ehrbase
+            pathType: Prefix
+            backend:
+              service:
+                name: ehrbase
+                port:
+                  number: {{ .Values.ehrbase.service.port }}
+{{- end }}
+---
+{{- if .Values.ingress.enabled }}
+{{/*
+Separate Ingress for /openfhir so it can carry its own rewrite-target.
+
+The engine serves at the ROOT (/health, /fc/context …), not under /openfhir — so
+the prefix must be stripped, exactly as docker/nginx/nginx.conf does with
+`rewrite ^/openfhir/?(.*)$ /$1 break;`. rewrite-target is an Ingress-level
+annotation, so mixing it into the main Ingress would also rewrite /fhir and
+/ehrbase (which must NOT be rewritten). Hence two Ingress objects.
+
+The capture group $1 from the regex path below is what rewrite-target consumes.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack-openfhir
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    {{- with .Values.ingress.annotations }}
+    {{- range $k, $v := . }}
+    {{- if ne $k "nginx.ingress.kubernetes.io/use-regex" }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /openfhir(?:/(.*))?$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: openfhir
+                port:
+                  number: {{ .Values.openfhir.service.port }}
+{{- end }}

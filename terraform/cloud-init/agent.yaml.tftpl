@@ -1,0 +1,39 @@
+#cloud-config
+# k3s agent bootstrap — joins the control-plane over the private network.
+# Templated vars: k3s_version, k3s_token, server_url (https://<cp-private-ip>:6443),
+# node_ip (private), flannel_iface.
+package_update: true
+packages:
+  - curl
+
+runcmd:
+  # Bring up the Hetzner private-network NIC. The hcloud cloud-init datasource only
+  # emits netplan config for the PUBLIC interface (eth0), so ${flannel_iface} exists
+  # but stays DOWN with no IPv4. k3s then dies with
+  #   "flannel exited: failed to find IPv4 address for interface ${flannel_iface}"
+  #   "failed to validate nodeIP: node IP ... not found in the host's network interfaces"
+  # Configure it for DHCP and wait until it actually has an address before k3s starts.
+  - |
+    cat > /etc/netplan/60-private.yaml <<'NETPLAN'
+    network:
+      version: 2
+      ethernets:
+        ${flannel_iface}:
+          dhcp4: true
+    NETPLAN
+    chmod 600 /etc/netplan/60-private.yaml
+    netplan apply
+    for i in $(seq 1 60); do
+      ip -o -4 addr show ${flannel_iface} 2>/dev/null | grep -q inet && break
+      sleep 2
+    done
+
+  - |
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_CHANNEL="${k3s_version}" \
+      K3S_URL="${server_url}" \
+      K3S_TOKEN="${k3s_token}" \
+      sh -s - agent \
+        --kubelet-arg=cloud-provider=external \
+        --node-ip=${node_ip} \
+        --flannel-iface=${flannel_iface}

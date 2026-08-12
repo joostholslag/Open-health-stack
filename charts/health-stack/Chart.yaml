@@ -1,0 +1,29 @@
+apiVersion: v2
+name: health-stack
+description: >-
+  freshehr-open-health-stack — a dockerized openEHR → FHIR health-data stack
+  (HAPI FHIR with the openFHIR interceptor, EHRbase, the openFHIR engine, and
+  their Postgres backends). Runs on any Kubernetes cluster; ships values files
+  for Hetzner k3s (prod) and kind/minikube (dev).
+type: application
+
+# Chart version — bump on every chart change (SemVer). CI pins this to the
+# release tag when publishing to GHCR (see .github/workflows/helm-publish.yml).
+version: 0.1.0
+
+# The version of the app stack this chart deploys. Informational; the actual
+# image tags are set per-workload under `images.*` / `.image.tag` in values.yaml.
+appVersion: "0.1.0"
+
+keywords:
+  - openehr
+  - fhir
+  - hapi
+  - ehrbase
+  - openfhir
+  - health
+home: https://github.com/freshehr/freshehr-open-health-stack
+sources:
+  - https://github.com/freshehr/freshehr-open-health-stack
+maintainers:
+  - name: freshEHR

@@ -1,0 +1,63 @@
+{{/*
+ConfigMaps generated from the files in config/ (kept in sync with docker/). This
+whole rendered template is hashed by the checksum/config annotation on each pod
+(see _helpers.tpl → health-stack.configChecksum), which reproduces Kustomize's
+"roll pods when config changes" behavior without relying on name-suffix hashing.
+
+Two of these files carry credentials, so they are rendered from *.tpl with
+__PLACEHOLDER__ tokens replaced from .Values.secrets.values and shipped as
+SECRETS rather than ConfigMaps:
+
+  - cdrs.yml    → hapi-cdrs Secret       (interceptor's EHRbase basic-auth)
+  - init-db.sql → postgres-init-sql Secret (CREATE USER ... PASSWORD)
+
+Credential-free config stays in plain ConfigMaps.
+*/}}
+{{- $v := .Values.secrets.values -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hapi-config
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hapi") | nindent 4 }}
+data:
+  application.yml: |-
+{{ .Files.Get "config/application.yml" | indent 4 }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hapi-cdrs
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hapi") | nindent 4 }}
+type: Opaque
+stringData:
+  cdrs.yml: |-
+{{ .Files.Get "config/cdrs.yml.tpl"
+     | replace "__EHRBASE_AUTH_USER__" (default "ehrbase-user" $v.ehrbase.SECURITY_AUTHUSER)
+     | replace "__EHRBASE_AUTH_PASSWORD__" (required "secrets.values.ehrbase.SECURITY_AUTHPASSWORD is required" $v.ehrbase.SECURITY_AUTHPASSWORD)
+     | indent 4 }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-init-sql
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "postgres") | nindent 4 }}
+type: Opaque
+stringData:
+  init-db.sql: |-
+{{ .Files.Get "config/init-db.sql.tpl"
+     | replace "__HAPI_DB_PASS__" (required "secrets.values.hapi.HAPI_DB_PASS is required" $v.hapi.HAPI_DB_PASS)
+     | replace "__OPENFHIR_DB_PASS__" (required "secrets.values.openfhir.OPENFHIR_DB_PASS is required" $v.openfhir.OPENFHIR_DB_PASS)
+     | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfhir-config
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 4 }}
+data:
+  application.yaml: |-
+{{ .Files.Get "config/openfhir-application.yaml" | indent 4 }}

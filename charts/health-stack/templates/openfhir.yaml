@@ -1,0 +1,104 @@
+{{- /*
+The in-cluster openFHIR engine (FHIR ⇄ openEHR mapping). Always deployed — the
+stack is self-contained and has no hosted-sandbox mode. Requires the
+openfhir-license Secret; the engine will not start without it.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfhir
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 4 }}
+spec:
+  replicas: {{ .Values.openfhir.replicas }}
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "openfhir") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 8 }}
+      annotations:
+        {{- include "health-stack.configChecksum" (dict "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      initContainers:
+        # Deliver the IPS FHIRConnect mappings + OPT by copying a data-only image's
+        # payload into an emptyDir the engine reads. The payload is ~3.1 MB, over the
+        # ~1 MiB ConfigMap limit, so it ships as an OCI artifact instead.
+        - name: load-mappings
+          image: {{ include "health-stack.image" (dict "image" .Values.openfhir.mappingsImage "fallback" .Values.images.ipsMappings) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.openfhir.mappingsImage "fallback" .Values.images.ipsMappings) }}
+          command: ["sh", "-c", "cp -R /bootstrap/. /shared/"]
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /shared
+        {{- include "health-stack.waitForPostgres" (dict "ctx" . "host" "postgres" "user" "postgres" "userFromEnv" false) | nindent 8 }}
+      containers:
+        - name: openfhir
+          image: {{ include "health-stack.image" (dict "image" .Values.openfhir.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.openfhir.image) }}
+          ports:
+            - name: http
+              containerPort: 8080
+          # No DB_TYPE env: the engine reads `openfhir.db.type` from the mounted
+          # application.yaml (@ConditionalOnProperty), not a bare DB_TYPE.
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretNames.openfhir }}     # OPENFHIR_DB_USER/PASS
+          volumeMounts:
+            - name: config
+              # MUST be /app/application.yaml — the image has WorkingDir=/app, so
+              # Spring Boot reads ./application.yaml from there. Mounting at / is
+              # silently ignored and the engine falls back to Mongo defaults.
+              mountPath: /app/application.yaml
+              subPath: application.yaml
+              readOnly: true
+            - name: bootstrap
+              mountPath: /app/bootstrap
+            - name: license
+              mountPath: /app/openfhir-license.json
+              subPath: openfhir-license.json
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.openfhir.readiness.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.openfhir.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.openfhir.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.openfhir.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.openfhir.liveness.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.openfhir.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.openfhir.liveness.periodSeconds }}
+          {{- with .Values.openfhir.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: openfhir-config
+        - name: bootstrap
+          emptyDir: {}
+        - name: license
+          secret:
+            # Vendor license applied out-of-band (see secrets.example.yaml).
+            secretName: {{ .Values.secretNames.openfhirLicense }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openfhir
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 4 }}
+spec:
+  type: {{ .Values.openfhir.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "openfhir") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.openfhir.service.port }}
+      targetPort: 8080

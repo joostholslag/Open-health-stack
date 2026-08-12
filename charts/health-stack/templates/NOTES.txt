@@ -1,0 +1,36 @@
+
+  health-stack {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+  openFHIR      : in-cluster engine (requires the '{{ .Values.secretNames.openfhirLicense }}' Secret)
+  Ingress host  : {{ .Values.ingress.host }}{{ if .Values.ingress.tls.enabled }} (TLS via {{ .Values.ingress.tls.clusterIssuer }}){{ else }} (plain HTTP){{ end }}
+  Storage class : {{ if .Values.storage.className }}{{ .Values.storage.className }}{{ else }}<cluster default>{{ end }}
+
+{{- if not .Values.secrets.create }}
+
+  ⚠  Secrets are NOT managed by this release (secrets.create=false).
+     Create the required Secrets out-of-band BEFORE the pods can start. (Installing
+     via Terraform? It sets secrets.create=true and generates them — you should not
+     be seeing this.) A template ships at charts/health-stack/secrets.example.yaml:
+       cp charts/health-stack/secrets.example.yaml charts/health-stack/secrets.yaml  # edit
+       kubectl apply -n {{ .Release.Namespace }} -f charts/health-stack/secrets.yaml
+     Required: {{ .Values.secretNames.postgres }}, {{ .Values.secretNames.ehrbase }}, {{ .Values.secretNames.hapi }},
+               {{ .Values.secretNames.openfhir }}, {{ .Values.secretNames.openfhirLicense }}
+{{- else }}
+
+  ⚠  secrets.create=true — placeholder credentials were rendered. Do NOT use this
+     in production; create real Secrets out-of-band and set secrets.create=false.
+{{- end }}
+
+  Check rollout:
+    kubectl get pods -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+
+  Smoke test (point DNS '{{ .Values.ingress.host }}' at your ingress LB first):
+    curl {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}/fhir/metadata
+{{- end }}
+
+  Routes: /fhir → HAPI · /ehrbase → EHRbase · /openfhir → openFHIR
+
+  One-time per fresh CDR: upload the IPS operational template to EHRbase, or
+  composition writes fail 422 "Could not retrieve template". See `make template`.
