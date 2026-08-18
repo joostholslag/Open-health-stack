@@ -1,4 +1,3 @@
-# Problem list composition model - used in Update Model Problem List
 grammar: FHIRConnect/v1.0.0
 type: model
 metadata:
@@ -62,37 +61,57 @@ mappings:
           - path: "display"
             value: "Patient summary Document"
 
-  - name: "sectionActiveProblems"
-    with:
-      fhir: "$resource.section"
-      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='Problem List']"
-    slotArchetype: "SECTION.adhoc.v1_problem_list"
-    fhirCondition:
-      targetRoot: "$resource.section"
-      targetAttribute: "code.coding.code"
-      operator: "one of"
-      criteria: "11450-4"
-
-
   - name: "sectionAllergiesAndIntolerances"
     with:
       fhir: "$resource.section"
-      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='Allergies and Intolerances']"
-    slotArchetype: "SECTION.adhoc.v1_adverse_reaction_list"
+      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='EPS Allergies']"
+    slotArchetype: "SECTION.adhoc.v1_allergies_and_intolerances"
     fhirCondition:
       targetRoot: "$resource.section"
       targetAttribute: "code.coding.code"
       operator: "one of"
       criteria: "48765-2"
 
-
-  - name: "sectionMedications"
+  - name: "sectionProblems"
     with:
       fhir: "$resource.section"
-      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='Medication list']"
-    slotArchetype: "SECTION.adhoc.v1_medication_list"
+      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='EPS Problems']"
+    slotArchetype: "SECTION.adhoc.v1_problems"
     fhirCondition:
       targetRoot: "$resource.section"
       targetAttribute: "code.coding.code"
       operator: "one of"
-      criteria: "10160-0"
+      criteria: "11450-4"
+
+#  - name: "sectionMedications"
+#    with:
+#      fhir: "$resource.section"
+#      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='EHDS Medication Summary']"
+#    slotArchetype: "SECTION.adhoc.v1_medication_summary"
+#    fhirCondition:
+#      targetRoot: "$resource.section"
+#      targetAttribute: "code.coding.code"
+#      operator: "one of"
+#      criteria: "10160-0"
+#
+  - name: "sectionMedicalDevices"
+    with:
+      fhir: "$resource.section"
+      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='EPS Medical Devices']"
+    slotArchetype: "SECTION.adhoc.v1_medical_devices"
+    fhirCondition:
+      targetRoot: "$resource.section"
+      targetAttribute: "code.coding.code"
+      operator: "one of"
+      criteria: "46264-8"
+
+  - name: "sectionProcedures"
+    with:
+      fhir: "$resource.section"
+      openehr: "$composition/content[openEHR-EHR-SECTION.adhoc.v1 and name/value='EPS History of Procedures']"
+    slotArchetype: "SECTION.adhoc.v1_procedures"
+    fhirCondition:
+      targetRoot: "$resource.section"
+      targetAttribute: "code.coding.code"
+      operator: "one of"
+      criteria: "47519-4"

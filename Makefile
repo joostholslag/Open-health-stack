@@ -79,19 +79,67 @@ images-push: images ## Build then push both images to Docker Hub (needs `docker 
 	docker push $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG)
 
 .PHONY: template
-template: ## Upload the IPS operational template (OPT) into EHRbase (required once per fresh CDR)
-	@# openFHIR bootstraps the OPT into its own store, but EHRbase needs it too —
-	@# without it a composition store fails with 422 "Could not retrieve template
-	@# for template Id: International Patient Summary". Idempotent: re-running an
-	@# existing template returns 409, which is fine.
-	@curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
-		-X POST http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4 \
-		-H 'Content-Type: application/xml' -H 'Accept: application/xml' \
-		--data-binary @"$(DOCKER_DIR)/openfhir/bootstrap/International Patient Summary.opt" \
-		-o /dev/null -w "  upload OPT -> HTTP %{http_code}\n"
+template: ## Upload every operational template (OPT) in the bootstrap dir into EHRbase (required once per fresh CDR)
+	@# openFHIR bootstraps the OPTs into its own store, but EHRbase needs them too —
+	@# without them a composition store fails with 422 "Could not retrieve template
+	@# for template Id: <id>". Idempotent: re-uploading an existing template
+	@# returns 409, which is fine.
+	@#
+	@# Loops over the directory rather than naming one file: docker/openfhir/bootstrap
+	@# is the single source of truth feeding openFHIR, EHRbase and the UI, and it now
+	@# carries more than one template. Adding an OPT there must not also require
+	@# editing this target.
+	@found=0; \
+	for opt in "$(DOCKER_DIR)"/openfhir/bootstrap/*.opt; do \
+		[ -e "$$opt" ] || continue; \
+		found=1; \
+		printf '  %s -> HTTP ' "$$(basename "$$opt")"; \
+		curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
+			-X POST http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4 \
+			-H 'Content-Type: application/xml' -H 'Accept: application/xml' \
+			--data-binary @"$$opt" \
+			-o /dev/null -w '%{http_code}\n'; \
+	done; \
+	[ "$$found" = 1 ] || echo "  (no *.opt in $(DOCKER_DIR)/openfhir/bootstrap)"
 	@echo "  templates in EHRbase:"; curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
 		-H 'Accept: application/json' \
 		http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4
+
+.PHONY: bootstrap
+bootstrap: ## Make openFHIR re-scan its bootstrap dir (no restart needed)
+	@# BootstrapController rescans openfhir.bootstrap.dir in place: new files are
+	@# created, changed files updated, unchanged ones skipped. This is what picks up
+	@# a mapping YAML or an OPT added after the engine started — `make template`
+	@# only loads EHRbase, which knows nothing about FHIR Connect.
+	@curl -sS -X POST 'http://localhost:8083/$$bootstrap' \
+		-o /dev/null -w "  bootstrap -> HTTP %{http_code}\n"
+	@$(MAKE) --no-print-directory conceptmaps
+
+.PHONY: conceptmaps
+conceptmaps: ## Load the *_conceptmap.json terminology maps into openFHIR
+	@# $$bootstrap only scans *.yml and *.opt, so the ConceptMaps sitting next to the
+	@# mappers are never loaded by it. Without them a mapping run fails with
+	@# "No such id: null, url: ... ConceptMap exists. Terminology translation not
+	@# possible."
+	@#
+	@# Idempotent, but noisily so: re-posting an existing map answers 500 with
+	@# "ConceptMap with this url ... already exists", not a 409. That is a conflict,
+	@# not a failure, so it is reported as "already loaded" rather than being allowed
+	@# to look like a broken bootstrap.
+	@for cm in $$(find "$(DOCKER_DIR)/openfhir/bootstrap" -name '*_conceptmap.json' | sort); do \
+		body=$$(curl -sS -X POST http://localhost:8083/terminology/fhir/ConceptMap \
+			-H 'Content-Type: application/json' --data-binary @"$$cm" \
+			-w '\n%{http_code}'); \
+		code=$$(printf '%s' "$$body" | tail -n1); \
+		case "$$code" in \
+			2*) status="loaded";; \
+			*) case "$$body" in \
+				*"already exists"*) status="already loaded";; \
+				*) status="FAILED (HTTP $$code)";; \
+			esac;; \
+		esac; \
+		printf '  %-46s %s\n' "$$(basename "$$cm")" "$$status"; \
+	done
 
 .PHONY: smoke
 smoke: ## Run health curls against the running compose stack

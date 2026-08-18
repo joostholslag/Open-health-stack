@@ -1,7 +1,7 @@
 grammar: FHIRConnect/v1.0.0
 type: model
 metadata:
-  name: SECTION.adhoc.v1_adverse_reaction_list
+  name: SECTION.adhoc.v1_allergies_and_intolerances
   version: 0.0.1-alpha
 spec:
   system: FHIR
@@ -12,6 +12,8 @@ spec:
     structureDefinition: http://hl7.org/fhir/StructureDefinition/BackboneElement
 
 mappings:
+
+
   - name: "entry"
     with:
       fhir: "entry"
@@ -24,6 +26,7 @@ mappings:
             fhir: "$fhirRoot"
             openehr: "$archetype/items[openEHR-EHR-EVALUATION.adverse_reaction_risk.v2]"
           slotArchetype: "EVALUATION.adverse_reaction_risk.v2"
+
   - name: "title"
     with:
       fhir: "$fhirRoot"
@@ -32,7 +35,7 @@ mappings:
       - name: "manualTitle"
         fhir:
           - path: "title"
-            value: "Active Allergies and Intolerances"
+            value: "Allergies and Intolerances"
 
   - name: "code"
     with:
@@ -50,9 +53,10 @@ mappings:
       - name: "manualDisplay"
         fhir:
           - path: "display"
-            value: "Allergies and Intolerances"
+            value: "Allergies and adverse reactions Document"
 
-  - name: "emptyReason"
+  # emptyReason: absence of information (patient unconscious, no data available)
+  - name: "emptyReasonAbsence"
     with:
       fhir: "emptyReason"
       openehr: "$archetype/items[openEHR-EHR-EVALUATION.absence.v2]"
@@ -61,39 +65,10 @@ mappings:
       targetAttribute: "emptyReason.coding.code"
       operator: "not of"
       criteria: "nilknown"
+    slotArchetype: "EVALUATION.absence.v2"
 
-    followedBy:
-      mappings:
-        - name: "text"
-          with:
-            fhir: "text"
-            openehr: "data[at0001]/items[at0002]"
-
-        - name: "reason"
-          with:
-            fhir: "coding"
-            openehr: "$archetype"
-          followedBy:
-            mappings:
-              - name: "code"
-                with:
-                  fhir: "display"
-                  openehr: "data[at0001]/items[at0005]"
-              - name: "manualEmptyResonCoding"
-                with:
-                  fhir: "$fhirRoot"
-                  openehr: "$archetype"
-                manual:
-                  - name: "manualSystem"
-                    fhir:
-                      - path: "system"
-                        value: "http://terminology.hl7.org/CodeSystem/list-empty-reason"
-                  - name: "manualCode"
-                    fhir:
-                      - path: "code"
-                        value: "unavailable"
-
-  - name: "emptyReason" # goes after above and if it it's there, it will overwrite it which is ok
+  # emptyReason: global exclusion (no known allergies)
+  - name: "emptyReasonExclusion"
     with:
       fhir: "emptyReason"
       openehr: "$archetype/items[openEHR-EHR-EVALUATION.exclusion_global.v1]"
@@ -106,36 +81,28 @@ mappings:
       targetAttribute: "emptyReason.coding.code"
       operator: "one of"
       criteria: "nilknown"
+    slotArchetype: "EVALUATION.exclusion_global.v1"
+
+  - name: "narrativeToOpenEhr"
+    unidirectional: "fhir->openehr"
+    with:
+      fhir: "text"
+      openehr: "$archetype/items[openEHR-EHR-EVALUATION.container.v0]/data[at0001]/items[openEHR-EHR-CLUSTER.fhir_narrative.v0]"
     followedBy:
       mappings:
-        - name: "text"
+        - name: "div"
           with:
-            fhir: "text"
-            openehr: "data[at0001]/items[at0002]"
-
-        - name: "reason"
+            fhir: "div"
+            openehr: "items[at0002]"
+        - name: "status"
           with:
-            fhir: "coding"
-            openehr: "$archetype"
-          followedBy:
-            mappings:
-              - name: "code"
-                with:
-                  fhir: "display"
-                  openehr: "data[at0001]/items[at0002]"
-              - name: "manualEmptyResonCoding"
-                with:
-                  fhir: "$fhirRoot"
-                  openehr: "$archetype"
-                manual:
-                  - name: "manualSystem"
-                    fhir:
-                      - path: "system"
-                        value: "http://terminology.hl7.org/CodeSystem/list-empty-reason"
-                  - name: "manualCode"
-                    fhir:
-                      - path: "code"
-                        value: "nilknown"
+            fhir: "$fhirRoot"
+            openehr: "items[at0001]"
+          manual:
+            - name: "manualNarrativeStatus"
+              openehr:
+                - path: "$openehrRoot"
+                  value: "generated"
 
   - name: "narrativeText"
     with:

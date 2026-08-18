@@ -130,6 +130,16 @@ services:
       # interpolates OPENFHIR_DB_USER/PASS into spring.datasource.*.
       OPENFHIR_DB_USER: ${OPENFHIR_DB_USER:-openfhir}
       OPENFHIR_DB_PASS: ${OPENFHIR_DB_PASS:-openfhir}
+      # Load the mounted config EXPLICITLY. Spring Boot only auto-detects
+      # ./application.yaml relative to WorkingDir, and the Docker Hub image sets
+      # no WORKDIR (so WorkingDir=/, with the jar at /app.jar), while locally
+      # built tags use WORKDIR /app. Under the Hub image the file mounted at
+      # /app/application.yaml is therefore silently ignored and the engine falls
+      # back to its Mongo defaults. The symptom is NOT a config error but a bean
+      # error at startup: "No qualifying bean of type ... OptRepository"
+      # (openfhir.db.type never reaches @ConditionalOnProperty). Setting the
+      # location explicitly works under either image.
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/app/application.yaml
     volumes:
       # MUST be /app/application.yaml — WorkingDir=/app, so Spring Boot reads
       # ./application.yaml from there. Mounting at / is silently ignored.
@@ -141,7 +151,10 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      # BusyBox wget, not curl: the enterprise image ships no curl, so the previous
+      # `curl -fsS` probe exited 127 and pinned the container to `unhealthy` while
+      # /health was serving 200 — which in turn blocked hapi/nginx via depends_on.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 20

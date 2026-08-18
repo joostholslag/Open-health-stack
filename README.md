@@ -164,9 +164,22 @@ docker compose build hapi        # layers the interceptor JAR onto HAPI
 docker compose up -d             # all 5 services (needs the openFHIR license)
 docker compose ps                # wait for all to be healthy
 
-# One-time per fresh CDR — upload the IPS operational template to EHRbase:
+# One-time per fresh CDR — upload every OPT in docker/openfhir/bootstrap to EHRbase:
 #   make template
+# Make openFHIR re-scan its bootstrap dir (also loads the ConceptMaps):
+#   make bootstrap
 ```
+
+> **Mapping sets collide.** openFHIR keys model mappers by archetype name globally,
+> not per template, so the EPS and IPS sets cannot both be loaded — they share five
+> archetypes (`COMPOSITION.health_summary.v1`, `EVALUATION.problem_diagnosis.v1`,
+> `EVALUATION.adverse_reaction_risk.v2`, `CLUSTER.adverse_reaction_event.v1`,
+> `CLUSTER.problem_qualifier.v2`). `make bootstrap` reports the losers as `FAILED`,
+> and the failure is quiet: `/openfhir/tofhir` still answers **200**, but with a bare
+> `Composition` and no clinical resources. After bootstrapping, check the ledger for
+> `FAILED` and confirm the Bundle has more than one entry. To switch an already-loaded
+> mapper to the other set, `PUT /fc/model/{id}` with the YAML and
+> `Content-Type: text/plain` (`application/yaml` is a 415).
 
 Verify:
 
