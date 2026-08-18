@@ -1,0 +1,79 @@
+# Validate the health-stack chart on every change.
+#
+# This does NOT publish the chart anywhere, deliberately. Terraform installs it
+# from its path in this repo (modules/k8s-apps sets chart_path to
+# ../../../charts/health-stack), so nothing ever pulls it from a registry.
+#
+# Pushing a packaged copy to GHCR would create a second artifact that nothing
+# installs from, and that can silently disagree with the working tree — a
+# registry claiming to hold "0.1.0" while a different 0.1.0 is what Terraform
+# actually applied. If this chart is ever meant to be consumed by someone who
+# has not cloned the repo, add a publish job back AND point
+# `helm_release.chart` at `oci://...` at a pinned version, so the published
+# artifact and the deployed one are the same thing by construction.
+name: helm-lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/helm-lint.yml"
+  pull_request:
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/helm-lint.yml"
+  workflow_dispatch:
+
+env:
+  CHART_DIR: charts/health-stack
+
+jobs:
+  # ── Lint + render every values file (catches template regressions) ──────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: helm lint (default + each values file)
+        run: |
+          set -e
+          # Same dummy password as the render step below — without it lint emits
+          # four "missing required values" warnings per invocation, which is
+          # noise that would hide a real one. See that step for why it is needed.
+          DUMMY='--set secrets.values.ehrbase.SECURITY_AUTHPASSWORD=ci-render-check'
+          helm lint "$CHART_DIR" $DUMMY
+          for f in hetzner dev; do
+            echo "── lint values-$f ──"
+            helm lint "$CHART_DIR" $DUMMY -f "$CHART_DIR/values-$f.yaml"
+          done
+
+      - name: helm template render-check
+        run: |
+          set -e
+          # A DUMMY EHRbase password is required for any render to succeed:
+          # configmaps.yaml renders cdrs.yml for the openFHIR interceptor and
+          # calls `required` on secrets.values.ehrbase.SECURITY_AUTHPASSWORD.
+          # Terraform always supplies the real one (set_sensitive in
+          # modules/k8s-apps), so deploys are unaffected — but a bare
+          # `helm template` has no value to substitute and fails outright.
+          #
+          # The value is meaningless and never leaves this runner; it exists so
+          # the templates can be exercised at all.
+          DUMMY='--set secrets.values.ehrbase.SECURITY_AUTHPASSWORD=ci-render-check'
+
+          # Render must produce valid, non-empty YAML for both openFHIR modes and
+          # for each per-cloud values file.
+          render() {
+            echo "── template $* ──"
+            helm template health-stack "$CHART_DIR" -n health-stack $DUMMY "$@" \
+              | python3 -c 'import sys,yaml; d=[x for x in yaml.safe_load_all(sys.stdin) if x]; assert d, "empty render"; print(f"  {len(d)} objects OK")'
+          }
+          render
+          render --set secrets.create=true
+          for f in hetzner dev; do
+            render -f "$CHART_DIR/values-$f.yaml"
+          done

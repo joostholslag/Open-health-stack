@@ -11,17 +11,11 @@ class**, plus the **ingress host** and a few **image tag / sizing** knobs.
 
 ## Install
 
-Published as an OCI artifact on GHCR (see `.github/workflows/helm-publish.yml`):
+Installed from this repo, not from a chart registry — Terraform's `k8s-apps`
+module points `helm_release.chart` at this directory. CI validates the chart on
+every change (`.github/workflows/helm-lint.yml`) but publishes nothing.
 
 ```bash
-# From the OCI registry (consumers):
-helm install health-stack \
-  oci://ghcr.io/<org>/charts/health-stack --version <x.y.z> \
-  -n health-stack --create-namespace \
-  -f values-hetzner.yaml \
-  --set ingress.host=health.yourdomain.com
-
-# Or from a local checkout (developers):
 helm upgrade --install health-stack charts/health-stack \
   -n health-stack --create-namespace \
   -f charts/health-stack/values-hetzner.yaml \

@@ -246,9 +246,13 @@ helm upgrade --install health-stack charts/health-stack \
   delivered by an **initContainer** that copies them into a shared `emptyDir`.
 - **The openFHIR engine is always deployed** and needs the `openfhir-license`
   Secret in every environment, including kind.
-- **Published to GHCR** as an OCI artifact on `v*` tags — external consumers can
-  `helm install oci://ghcr.io/<org>/charts/health-stack --version <x.y.z> -f values-hetzner.yaml`
-  without cloning the repo (see [`helm-publish.yml`](.github/workflows/helm-publish.yml)).
+- **Not published to any chart registry.** Terraform installs the chart from its
+  path in this repo, so a packaged copy in a registry would be a second artifact
+  that nothing installs from — and that can silently disagree with the working
+  tree. CI validates the chart on every change instead
+  (see [`helm-lint.yml`](.github/workflows/helm-lint.yml)). If external consumers
+  ever need `helm install oci://...`, add the publish job back *and* point
+  `helm_release.chart` at the registry, so what is published is what is deployed.
 
 ### Layer 3 — Terraform (Hetzner)
 
