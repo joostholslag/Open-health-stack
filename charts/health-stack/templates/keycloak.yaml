@@ -15,7 +15,10 @@ docker/docker-compose.yml keycloak service):
     matter how clients attach scopes. Hence: the openFHIR scopes attach as
     optionalClientScopes (same-file scopes DO attach) and are requested
     explicitly via scope=, while realm_access.roles + the oauth2-proxy
-    audience are restored via per-client protocol mappers.
+    audience are restored via per-client protocol mappers. The `email` and
+    `profile` built-ins are recreated too: oauth2-proxy's BROWSER flow
+    requests scope=openid email profile and Keycloak rejects the whole auth
+    request (invalid_scope) if they don't exist.
   - Same-file clients do NOT receive defaultDefaultClientScopes at import
     either — that list only applies to clients created AFTER import. The realm
     defines a minimal `roles` scope and lists it there so companion apps that

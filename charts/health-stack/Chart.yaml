@@ -7,9 +7,13 @@ description: >-
   for Hetzner k3s (prod) and kind/minikube (dev).
 type: application
 
-# Chart version — bump on every chart change (SemVer). CI pins this to the
+# Chart version — bump on EVERY chart change (SemVer). CI pins this to the
 # release tag when publishing to GHCR (see .github/workflows/helm-publish.yml).
-version: 0.1.0
+# ⚠ The bump is not cosmetic: Terraform's helm provider only re-renders the
+# release when an input changes, and for a local chart path that input is THIS
+# version — template/config edits without a bump make `terraform apply` report
+# "No changes" and the cluster silently keeps the old manifests.
+version: 0.2.1
 
 # The version of the app stack this chart deploys. Informational; the actual
 # image tags are set per-workload under `images.*` / `.image.tag` in values.yaml.
