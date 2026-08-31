@@ -1,21 +1,30 @@
 # Dev overrides — auto-merged by `docker compose` when present.
-# Adds JVM remote-debug ports and enables the debug agent. Delete/rename this
-# file (e.g. to docker-compose.override.yml.disabled) to run "prod-like".
+# Adds JVM remote-debug ports and the DIRECT-PORT DEV BYPASS: host ports that
+# reach hapi/ehrbase/openfhir straight past nginx (and so past the oauth2-proxy
+# edge auth on /fhir — EHRbase and openFHIR still demand a Bearer token even
+# on their direct ports, since both validate natively). Delete/rename this file
+# (e.g. to docker-compose.override.yml.disabled) to run "prod-like": nginx-only
+# routing, every data route authenticated.
 #
-# Note: this does NOT start the local openFHIR engine — that lives behind the
 # Run `docker compose up -d` to bring the stack up.
 
 services:
   hapi:
     ports:
+      - "8080:8080"          # dev bypass — unauthenticated /fhir, nginx skipped
       - "5005:5005"          # JVM remote debug (JDWP)
     environment:
       # Attach a debugger to localhost:5005. suspend=n so HAPI boots normally.
       JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+
+  ehrbase:
+    ports:
+      - "8082:8080"          # dev bypass — still OAuth-protected (native validation)
 
   # Expose the openFHIR engine's debug/extra port too when the profile is up.
   openfhir:
     environment:
       JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5006"
     ports:
+      - "8083:8080"          # dev bypass — still OAuth-protected (native validation)
       - "5006:5006"

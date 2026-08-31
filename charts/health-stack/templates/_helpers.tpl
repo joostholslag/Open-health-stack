@@ -102,6 +102,16 @@ It hashes the rendered configmaps template so ANY config-file change triggers a 
 checksum/config: {{ include (print .ctx.Template.BasePath "/configmaps.yaml") .ctx | sha256sum }}
 {{- end -}}
 
+{{/*
+The canonical OIDC issuer for the freshehr realm: the PUBLIC Keycloak URL.
+This is what KC_HOSTNAME pins, what every token's `iss` carries, and what both
+EHRbase (issuer-uri) and oauth2-proxy (oidc-issuer-url) validate against.
+Call with the root context.
+*/}}
+{{- define "health-stack.oidcIssuer" -}}
+{{- printf "https://%s/auth/realms/%s" .Values.ingress.host .Values.keycloak.realm -}}
+{{- end -}}
+
 {{/* Common pod scheduling block (nodeSelector/tolerations/affinity). */}}
 {{- define "health-stack.scheduling" -}}
 {{- with .Values.nodeSelector }}

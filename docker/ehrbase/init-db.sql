@@ -26,3 +26,13 @@ CREATE USER openfhir WITH ENCRYPTED PASSWORD 'openfhir';
 CREATE DATABASE openfhir OWNER openfhir;
 GRANT ALL PRIVILEGES ON DATABASE openfhir TO openfhir;
 ALTER ROLE openfhir SET search_path TO public;
+
+-- ── Keycloak (realm + session store) ────────────────────────────────────────
+-- MUST stay the LAST database this script creates: the postgres healthcheck
+-- greps for it to prove the whole init bootstrap finished (see compose file).
+-- Changing this on an existing install needs a volume wipe: init scripts only
+-- run on first boot (`docker compose down -v`, then re-run `make template`).
+CREATE USER keycloak WITH ENCRYPTED PASSWORD 'keycloak';
+CREATE DATABASE keycloak OWNER keycloak;
+GRANT ALL PRIVILEGES ON DATABASE keycloak TO keycloak;
+ALTER ROLE keycloak SET search_path TO public;

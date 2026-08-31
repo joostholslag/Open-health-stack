@@ -50,6 +50,30 @@ ingress:
     clusterIssuer: letsencrypt-prod
     secretName: health-stack-tls
 
+  # ── Edge OAuth2 for HAPI + openFHIR (ingress-nginx auth-url → oauth2-proxy) ─
+  # EHRbase validates Bearer tokens natively (SECURITY_AUTHTYPE=OAUTH), but HAPI
+  # and openFHIR have NO application-level auth. Unauthenticated, /fhir accepts
+  # POST/PUT/DELETE on every resource type — and because the openFHIR interceptor
+  # forwards matching writes into EHRbase, an open /fhir is a write path into the
+  # CDR that bypasses EHRbase's own token validation. So the edge must enforce it.
+  #
+  # Enforced by an ingress-nginx auth-url subrequest to the in-cluster
+  # oauth2-proxy on /fhir only (mirrors docker/nginx/nginx.conf
+  # `auth_request`; /ehrbase and /openfhir validate natively), so it applies
+  # ONLY to traffic arriving through the ingress. In-cluster traffic is
+  # unaffected — which is what keeps the kubelet probes (pod IP) working
+  # without credentials. The HAPI→openFHIR interceptor call authenticates
+  # itself (openfhir.oauth2.* in the hapi-config Secret).
+  #
+  # Default OFF so dev/kind installs stay frictionless; values-hetzner.yaml turns
+  # it ON, because that is the environment actually exposed to the internet.
+  # Requires oauth2Proxy.enabled + keycloak.enabled (both default true).
+  auth:
+    enabled: false
+    # auth-signin adds a browser redirect into the oauth2-proxy login flow on
+    # 401; API callers just get the 401. Harmless either way.
+    signin: true
+
 # Optionally render a cert-manager ClusterIssuer (Let's Encrypt HTTP-01 via nginx).
 # Requires cert-manager installed in the cluster (Terraform k8s-apps does this).
 clusterIssuer:
@@ -68,10 +92,12 @@ images:
     repository: openfhir/hapi-openfhir
     tag: latest
     pullPolicy: IfNotPresent
-  # Data-only image: the IPS FHIRConnect mappings + OPT, copied into the openFHIR
+  # Data-only image: the EPS FHIRConnect mappings + OPT, copied into the openFHIR
   # pod by an initContainer (built from docker/openfhir/bootstrap.Dockerfile).
+  # The key keeps its historical `ipsMappings` name so existing overrides survive;
+  # the repository it points at is the EPS bundle.
   ipsMappings:
-    repository: openfhir/fhirconnect-ips-mappings
+    repository: openfhir/fhirconnect-eps-mappings
     tag: latest
     pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -93,11 +119,10 @@ secrets:
       EHRBASE_USER_ADMIN: ehrbase
       EHRBASE_PASSWORD_ADMIN: ehrbase
     ehrbase:
-      SECURITY_AUTHTYPE: BASIC
-      # Basic-auth identity EHRbase enforces on its REST API. MUST match the
-      # credentials cdrs.yml gives the interceptor (rendered from the same values).
-      SECURITY_AUTHUSER: ehrbase-user
-      SECURITY_AUTHPASSWORD: ""
+      # Native OAuth2 resource server against the freshehr Keycloak realm; the
+      # issuer URI is injected by the ehrbase template (health-stack.oidcIssuer).
+      # The old BASIC mode (SECURITY_AUTHUSER/PASSWORD) is retired.
+      SECURITY_AUTHTYPE: OAUTH
       DB_USER: ehrbase_restricted
       DB_PASS: ehrbase_restricted
       DB_USER_ADMIN: ehrbase
@@ -109,6 +134,21 @@ secrets:
     openfhir:
       OPENFHIR_DB_USER: openfhir
       OPENFHIR_DB_PASS: openfhir
+    # Keycloak + oauth2-proxy credentials. Placeholders for dev (secrets.create=true)
+    # ONLY — Terraform overrides every one of these with generated values on Hetzner.
+    # The three client secrets are substituted into the realm import
+    # (config/realm-freshehr.json.tpl) AND handed to their consumers, so realm and
+    # consumers always agree.
+    keycloak:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      API_CLIENT_SECRET: dev-api-client-secret
+      HAPI_SVC_SECRET: dev-hapi-svc-secret
+      OAUTH2_PROXY_CLIENT_SECRET: dev-oauth2-proxy-secret
+      # Must be exactly 16, 24 or 32 bytes (oauth2-proxy cookie encryption).
+      OAUTH2_PROXY_COOKIE_SECRET: 0123456789abcdef0123456789abcdef
 
 # The Secret name each workload references. Override only if you pre-create
 # Secrets under different names.
@@ -118,6 +158,8 @@ secretNames:
   hapi: hapi-secret
   openfhir: openfhir-secret
   openfhirLicense: openfhir-license
+  keycloak: keycloak-secret
+  oauth2Proxy: oauth2-proxy-secret
 
 # Shared Postgres image used by the wait-for-postgres initContainers.
 initPostgresImage: postgres:16-alpine
@@ -152,19 +194,42 @@ ehrbase:
   replicas: 1
   image:
     repository: ehrbase/ehrbase
-    tag: latest
+    # Pinned, not :latest — the MANAGEMENT_* env above is version-coupled (see
+    # comment there), and an unpinned tag let the cluster and a local checkout
+    # resolve to different EHRbase generations with opposite crash modes.
+    tag: 2.35.1
     pullPolicy: IfNotPresent
   env:
     DB_URL: jdbc:postgresql://postgres:5432/ehrbase
     SPRING_PROFILES_ACTIVE: local
+    # OAuth mode (SECURITY_AUTHTYPE=OAUTH in the ehrbase Secret). Explicit
+    # defaults, stated for greppability: non-admin needs USER, /rest/admin/**
+    # needs ADMIN. Roles come from the token's realm_access.roles.
+    SECURITY_OAUTH2USERROLE: USER
+    SECURITY_OAUTH2ADMINROLE: ADMIN
+    # In OAUTH mode /rest/status is no longer public, so the probes move to the
+    # Spring management health endpoint — these two make it public.
+    # ⚠ VERSION-COUPLED to the pinned image below: EHRbase ≥2.35 sets
+    # management.endpoint.health.ACCESS in its bundled config (override the same
+    # property), while ≤2.28 sets health.ENABLED — and Spring treats the
+    # enabled+access PAIR as mutually exclusive, so using the wrong one for the
+    # image generation crashes EHRbase at startup. If you change the image tag,
+    # check which property that version's bundled application.yml uses.
+    MANAGEMENT_ENDPOINT_HEALTH_ACCESS: READ_ONLY
+    MANAGEMENT_ENDPOINTS_WEB_ACCESS: PUBLIC
+    # SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI is injected by the
+    # template (health-stack.oidcIssuer → https://<ingress.host>/auth/realms/…);
+    # set it here only to override that computed value.
   resources: {}
   readiness:
-    path: /ehrbase/rest/status
+    # Unauthenticated management endpoint (see env above) — /ehrbase/rest/status
+    # now requires a Bearer token, which the kubelet cannot supply.
+    path: /ehrbase/management/health
     initialDelaySeconds: 40
     periodSeconds: 10
     failureThreshold: 30
   liveness:
-    path: /ehrbase/rest/status
+    path: /ehrbase/management/health
     initialDelaySeconds: 120
     periodSeconds: 20
   service:
@@ -182,7 +247,7 @@ openfhir:
     repository: openfhir/openfhir-enterprise
     tag: latest
     pullPolicy: IfNotPresent
-  # IPS mappings initContainer image. Empty = fall back to .Values.images.ipsMappings.
+  # EPS mappings initContainer image. Empty = fall back to .Values.images.ipsMappings.
   mappingsImage: {}
   resources: {}
   readiness:
@@ -198,8 +263,64 @@ openfhir:
     type: ClusterIP
     port: 8080
 
+# ── Keycloak (OIDC identity provider) ────────────────────────────────────────
+# Runs in production mode (`start --import-realm`) behind the TLS-terminating
+# ingress: KC_HTTP_ENABLED=true + KC_PROXY_HEADERS=xforwarded. The canonical
+# issuer is the PUBLIC URL https://<ingress.host>/auth/realms/<realm>
+# (KC_HOSTNAME) — in-cluster validators fetch discovery through the LB (hairpin;
+# needs the domain to resolve), while the HAPI interceptor fetches tokens from
+# the in-cluster Service (Keycloak answers under any Host header but always
+# stamps the canonical `iss`). Realm imported from a chart-rendered Secret
+# (config/realm-freshehr.json.tpl, client secrets substituted from
+# secrets.values.keycloak).
+#
+# ⚠ The admin console is publicly reachable at /auth/admin (generated 32-char
+# password from Terraform). To harden, deny that path at the ingress and
+# port-forward instead.
+keycloak:
+  enabled: true
+  replicas: 1
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: 26.7.2
+    pullPolicy: IfNotPresent
+  realm: freshehr
+  resources: {}
+  # Probes hit the management port (9000) natively via httpGet — no shell tricks
+  # needed in k8s (unlike the compose healthcheck's bash-/dev/tcp workaround).
+  readiness:
+    path: /auth/health/ready
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 30
+  liveness:
+    path: /auth/health/live
+    initialDelaySeconds: 120
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    port: 8080
+    managementPort: 9000
+
+# ── oauth2-proxy (edge Bearer-token validator for ingress auth-url) ──────────
+# auth_request-only deployment (static upstream): ingress-nginx sends auth-url
+# subrequests here for /fhir; oauth2-proxy validates the Bearer JWT
+# (signature, issuer, aud=oauth2-proxy) and answers 202/401. /ehrbase and
+# /openfhir need no subrequest — both validate natively.
+oauth2Proxy:
+  enabled: true
+  replicas: 1
+  image:
+    repository: quay.io/oauth2-proxy/oauth2-proxy
+    tag: v7.15.3
+    pullPolicy: IfNotPresent
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 4180
+
 # ── Postgres backends ────────────────────────────────────────────────────────
-# ONE Postgres shared by EHRbase, HAPI and openFHIR (a database each). Must stay on
+# ONE Postgres shared by EHRbase, HAPI, openFHIR and Keycloak (a database each). Must stay on
 # the ehrbase vendor image — EHRbase needs the extensions/roles it pre-provisions;
 # the other two just need an empty database. Non-production choice; see README.
 postgres:

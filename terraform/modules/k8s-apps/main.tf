@@ -57,17 +57,39 @@ variable "openfhir_db_password" {
   type      = string
   sensitive = true
 }
-variable "ehrbase_api_password" {
+# ── Keycloak / OAuth2 (edge auth on /fhir via oauth2-proxy; EHRbase and the
+# openFHIR engine validate natively). Client secrets are substituted into the
+# realm import AND handed to each consumer by the chart, so realm and consumers
+# always agree.
+variable "keycloak_admin_user" {
+  type    = string
+  default = "admin"
+}
+variable "keycloak_admin_password" {
   type      = string
   sensitive = true
 }
-
-# Basic-auth username EHRbase enforces (password is generated).
-variable "ehrbase_api_user" {
-  type    = string
-  default = "ehrbase-user"
+variable "keycloak_db_password" {
+  type      = string
+  sensitive = true
 }
-
+variable "kc_api_client_secret" {
+  type      = string
+  sensitive = true
+}
+variable "kc_hapi_svc_secret" {
+  type      = string
+  sensitive = true
+}
+variable "oauth2_proxy_client_secret" {
+  type      = string
+  sensitive = true
+}
+# Must be exactly 16, 24 or 32 bytes (oauth2-proxy cookie encryption).
+variable "oauth2_proxy_cookie_secret" {
+  type      = string
+  sensitive = true
+}
 # ingress-nginx Service type. NodePort on Hetzner — the hcloud LB fronts the pinned
 # NodePorts below.
 variable "ingress_service_type" {
@@ -225,15 +247,6 @@ resource "helm_release" "health_stack" {
     name  = "secrets.values.ehrbase.DB_PASS_ADMIN"
     value = var.ehrbase_db_admin_password
   }
-  # EHRbase REST basic-auth — also rendered into cdrs.yml for the interceptor.
-  set {
-    name  = "secrets.values.ehrbase.SECURITY_AUTHUSER"
-    value = var.ehrbase_api_user
-  }
-  set_sensitive {
-    name  = "secrets.values.ehrbase.SECURITY_AUTHPASSWORD"
-    value = var.ehrbase_api_password
-  }
   set {
     name  = "secrets.values.ehrbase.SERVER_NODENAME"
     value = var.domain
@@ -247,6 +260,39 @@ resource "helm_release" "health_stack" {
   set_sensitive {
     name  = "secrets.values.openfhir.OPENFHIR_DB_PASS"
     value = var.openfhir_db_password
+  }
+
+  # Keycloak + oauth2-proxy credentials. values-hetzner.yaml blanks these (the
+  # chart's `required` guards fail a bare render), so they MUST come from here.
+  # The three client secrets are substituted into the realm import and handed to
+  # their consumers by the chart.
+  set {
+    name  = "secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_USERNAME"
+    value = var.keycloak_admin_user
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD"
+    value = var.keycloak_admin_password
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.KC_DB_PASSWORD"
+    value = var.keycloak_db_password
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.API_CLIENT_SECRET"
+    value = var.kc_api_client_secret
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.HAPI_SVC_SECRET"
+    value = var.kc_hapi_svc_secret
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET"
+    value = var.oauth2_proxy_client_secret
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET"
+    value = var.oauth2_proxy_cookie_secret
   }
 
   # Terraform-owned overrides: real domain + issuer email.

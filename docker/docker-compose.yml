@@ -2,18 +2,34 @@
 # freshehr-open-health-stack — Layer 1: local docker-compose
 # ----------------------------------------------------------------------------
 # The whole stack, self-contained: hapi (+openFHIR interceptor), ehrbase, the
-# openFHIR engine, ONE shared Postgres (a database each for ehrbase/hapi/openfhir),
-# and nginx.
+# openFHIR engine, keycloak (OIDC IdP), oauth2-proxy (edge token validator),
+# ONE shared Postgres (a database each for ehrbase/hapi/openfhir/keycloak),
+# and nginx — 7 services.
 #
 # Everything runs in-cluster — there is no hosted-sandbox mode. The openFHIR engine
 # therefore REQUIRES the vendor license at openfhir/license/openfhir-license.json
 # (gitignored); request one at https://open-fhir.com#access.
 #
+# Auth (mirrors the k8s ingress split):
+#   /fhir      edge-validated by nginx auth_request -> oauth2-proxy
+#   /ehrbase   EHRbase validates natively (SECURITY_AUTHTYPE=OAUTH)
+#   /openfhir  engine validates natively (openfhir.protected, per-API scopes)
+#   /auth      Keycloak itself, public (token/discovery endpoints)
+# Get a Bearer token with `make token` (client_credentials, api-client).
+#
 # Usage:
 #   cp ../.env.example .env          # fill creds
 #   docker compose build hapi        # layers the interceptor JAR onto HAPI
-#   docker compose up -d             # all 5 services
-#   make template                    # once per fresh CDR: upload the IPS OPT to EHRbase
+#   docker compose up -d             # all 7 services
+#   make template                    # once per fresh CDR: upload the EPS OPT to EHRbase
+#   make bootstrap                   # once per fresh CDR: load openFHIR mappings +
+#                                    # ConceptMaps under tenant `freshehr` (the engine's
+#                                    # startup bootstrap is tenant-invisible when protected)
+#
+# ⚠️ Upgrading an existing install to the keycloak-enabled stack needs ONE
+# volume wipe (`docker compose down -v`): postgres init scripts (which now also
+# create the keycloak DB) only run on first boot. Re-run `make template` and
+# `make bootstrap` after.
 # ============================================================================
 
 services:
@@ -23,8 +39,8 @@ services:
       context: ./hapi
     image: ${HAPI_IMAGE:-openfhir/hapi-openfhir:latest}
     container_name: freshehr-hapi
-    ports:
-      - "8080:8080"
+    # No host port here: the direct-port dev bypass (8080:8080) lives in
+    # docker-compose.override.yml. Authenticated access goes via nginx /fhir.
     volumes:
       - ./hapi/application.yml:/app/config/application.yml:ro
       - ./hapi/cdrs.yml:/etc/cdrs.yml:ro
@@ -32,10 +48,12 @@ services:
       HAPI_FHIR_IPS_ENABLED: ${HAPI_FHIR_IPS_ENABLED:-true}
       HAPI_DB_USER: ${HAPI_DB_USER:-hapi}
       HAPI_DB_PASS: ${HAPI_DB_PASS:-hapi}
-      # The in-cluster openFHIR engine. No OAuth: the interceptor only attempts a
-      # token request when token-url + client-id + client-secret are all non-blank
-      # (ClientCredentialsConfig.isComplete()), and the local engine needs none.
+      # The in-cluster openFHIR engine. The engine is a protected resource
+      # server (openfhir.protected=true), so application.yml carries a full
+      # openfhir.oauth2 block (hapi-svc client_credentials) — the interceptor's
+      # all-or-none rule means the three props are always set together.
       OPENFHIR_BASE_URL: ${OPENFHIR_BASE_URL:-http://openfhir:8080}
+      KC_HAPI_SVC_SECRET: ${KC_HAPI_SVC_SECRET:-dev-hapi-svc-secret}
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,14 +72,25 @@ services:
   ehrbase:
     image: ehrbase/ehrbase
     container_name: freshehr-ehrbase
-    ports:
-      - "8082:8080"
+    # Direct host port (8082:8080) lives in docker-compose.override.yml.
     environment:
-      SECURITY_AUTHTYPE: ${EHRBASE_SECURITY_AUTHTYPE:-BASIC}
-      # HTTP basic-auth identity EHRbase enforces on its REST API. Must match the
-      # credentials the HAPI interceptor uses in cdrs.yml (EHRBASE_AUTH_*).
-      SECURITY_AUTHUSER: ${EHRBASE_AUTH_USER:-ehrbase-user}
-      SECURITY_AUTHPASSWORD: ${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword}
+      # Native OAuth2 resource server (vendor-supported): EHRbase validates
+      # Bearer tokens itself, so /ehrbase deliberately has NO nginx auth_request
+      # (mirrors the k8s /ehrbase Ingress). Roles come from realm_access.roles.
+      SECURITY_AUTHTYPE: ${EHRBASE_SECURITY_AUTHTYPE:-OAUTH}
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI: ${OIDC_ISSUER_URI:-http://keycloak:8080/auth/realms/freshehr}
+      # Explicit defaults, stated for greppability: non-admin endpoints need
+      # USER, /rest/admin/** needs ADMIN.
+      SECURITY_OAUTH2USERROLE: USER
+      SECURITY_OAUTH2ADMINROLE: ADMIN
+      # In OAUTH mode /rest/status is no longer public, so the healthcheck moves
+      # to the Spring management health endpoint — these two make it public.
+      # HEALTH_ENABLED, not HEALTH_ACCESS: EHRbase's bundled application.yml
+      # already sets management.endpoint.health.enabled, and Spring treats
+      # enabled+access as mutually exclusive (startup failure). WEB_ACCESS is an
+      # EHRbase-custom enum (ADMIN_ONLY|PRIVATE|PUBLIC).
+      MANAGEMENT_ENDPOINT_HEALTH_ENABLED: "true"
+      MANAGEMENT_ENDPOINTS_WEB_ACCESS: PUBLIC
       DB_URL: jdbc:postgresql://postgres:5432/ehrbase
       DB_USER: ${EHRBASE_DB_USER:-ehrbase_restricted}
       DB_PASS: ${EHRBASE_DB_PASS:-ehrbase_restricted}
@@ -72,15 +101,126 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Spring fetches the issuer's OIDC metadata at startup; without a live
+      # Keycloak, EHRbase exits immediately.
+      keycloak:
+        condition: service_healthy
     healthcheck:
       # The ehrbase image ships BusyBox wget only (no curl). /ehrbase/rest/status
-      # requires HTTP basic auth (SECURITY_AUTHTYPE=BASIC); pass the SECURITY_AUTH*
-      # creds inline. A successful fetch proves EHRbase + its DB are up.
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://$${SECURITY_AUTHUSER}:$${SECURITY_AUTHPASSWORD}@localhost:8080/ehrbase/rest/status || exit 1"]
+      # requires a Bearer token in OAUTH mode, so probe the unauthenticated
+      # management health endpoint instead (made public via MANAGEMENT_* above).
+      # A successful fetch proves EHRbase + its DB are up.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ehrbase/management/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 20
       start_period: 90s
+    networks:
+      - health-stack
+
+  # ── Keycloak (OIDC identity provider) ─────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.2
+    container_name: freshehr-keycloak
+    command: ["start-dev", "--import-realm"]
+    ports:
+      # Host callers fetch tokens at http://localhost:8081/auth/... — Keycloak
+      # answers under any Host header, but the token's `iss` is always the
+      # canonical KC_HOSTNAME below. Kept in the BASE compose file (not the
+      # override): the token endpoint is part of the stack's contract.
+      - "8081:8080"
+    environment:
+      # KC 26 names (KEYCLOAK_ADMIN/_PASSWORD are the pre-26 spelling).
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASS:-keycloak}
+      # Single canonical issuer strategy: serve under /auth and pin the issuer
+      # to the in-network URL. Backchannel-dynamic stays off — enabling it makes
+      # `iss` request-dependent and breaks EHRbase/oauth2-proxy validation.
+      # Trade-off: browser SSO redirect flows from the host don't work locally
+      # (phase 1 is Bearer-API-only); the admin console stays usable via
+      # KC_HOSTNAME_ADMIN.
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME: http://keycloak:8080/auth
+      KC_HOSTNAME_ADMIN: http://localhost:8081/auth
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /auth
+      KC_PROXY_HEADERS: xforwarded
+    volumes:
+      # Realm `freshehr` (roles, clients, fixed dev secrets) auto-imported on
+      # first boot. Fixed secrets are deliberate: env substitution inside realm
+      # imports is not dependable; mirrors .env.example.
+      #
+      # Realm-JSON constraints learned the hard way:
+      # - Defining a top-level `clientScopes` array REPLACES the realm's entire
+      #   scope set: the built-ins (roles, profile, email, web-origins, acr,
+      #   basic) are never created, so realm_access.roles vanishes from every
+      #   token no matter how clients attach scopes. Hence: the openFHIR scopes
+      #   attach as optionalClientScopes (same-file scopes DO attach) and are
+      #   requested explicitly via scope= (make token / openfhir.oauth2.scope),
+      #   while realm_access.roles + the oauth2-proxy audience are restored via
+      #   per-client protocol mappers (realm-roles / oauth2-proxy-audience).
+      # - Same-file clients do NOT receive defaultDefaultClientScopes at import
+      #   either — that list only applies to clients created AFTER import. The
+      #   realm therefore defines a minimal `roles` scope and lists it there so
+      #   companion apps that self-register clients via the admin API (e.g.
+      #   nictiz-ui's `npm run register`) still get realm_access.roles; the
+      #   stack's own imported clients rely on their per-client mappers.
+      # - Client `description` fields cap at 255 chars (DB column); longer
+      #   values abort the whole import with "value too long".
+      - ./keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The keycloak image has no curl/wget — talk HTTP over bash's /dev/tcp to
+      # the management port (9000, path /auth/... via KC_HTTP_MANAGEMENT_RELATIVE_PATH).
+      test:
+        - CMD
+        - /bin/bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          echo -e 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": "UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - health-stack
+
+  # ── oauth2-proxy (edge Bearer-token validator for nginx auth_request) ─────
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
+    container_name: freshehr-oauth2-proxy
+    environment:
+      OAUTH2_PROXY_PROVIDER: keycloak-oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OIDC_ISSUER_URI:-http://keycloak:8080/auth/realms/freshehr}
+      OAUTH2_PROXY_CLIENT_ID: oauth2-proxy
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET:-dev-oauth2-proxy-secret}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:-0123456789abcdef0123456789abcdef}
+      OAUTH2_PROXY_REDIRECT_URL: https://localhost/oauth2/callback
+      # Pure Bearer validation for nginx auth_request — no session/cookie flow.
+      OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
+      # Service-account tokens carry no email claim; identify by `sub` and
+      # accept any domain. Insecure-unverified is fine: the JWT signature +
+      # issuer + audience checks are what gate access here.
+      OAUTH2_PROXY_OIDC_EMAIL_CLAIM: sub
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL: "true"
+      # auth_request-only deployment: no real upstream behind the proxy.
+      OAUTH2_PROXY_UPSTREAMS: static://202
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      # Fallback if the oauth2-proxy-audience mapper ever misbehaves, uncomment:
+      # OAUTH2_PROXY_OIDC_EXTRA_AUDIENCES: account
+    depends_on:
+      keycloak:
+        condition: service_healthy
     networks:
       - health-stack
 
@@ -107,7 +247,7 @@ services:
       # temporary local-only server, which then restarts. Dependents that start in
       # that window die with "The connection attempt failed". Probing for the last
       # database our init script creates proves the bootstrap actually finished.
-      test: ["CMD-SHELL", "psql -U $${POSTGRES_USER} -lqt | cut -d'|' -f1 | grep -qw openfhir"]
+      test: ["CMD-SHELL", "psql -U $${POSTGRES_USER} -lqt | cut -d'|' -f1 | grep -qw keycloak"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -123,8 +263,7 @@ services:
     # FhirConnectModelRepository" under a postgres config.
     image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:latest}
     container_name: freshehr-openfhir
-    ports:
-      - "8083:8080"
+    # Direct host port (8083:8080) lives in docker-compose.override.yml.
     environment:
       # The engine reads Spring's standard datasource keys; application.yaml
       # interpolates OPENFHIR_DB_USER/PASS into spring.datasource.*.
@@ -176,6 +315,8 @@ services:
       - hapi
       - ehrbase
       - openfhir
+      - keycloak
+      - oauth2-proxy
     healthcheck:
       # Use 127.0.0.1 (not "localhost", which may resolve to ::1 first) so the
       # check hits the IPv4 :443 listener nginx binds.

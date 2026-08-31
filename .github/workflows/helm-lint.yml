@@ -41,10 +41,10 @@ jobs:
       - name: helm lint (default + each values file)
         run: |
           set -e
-          # Same dummy password as the render step below — without it lint emits
-          # four "missing required values" warnings per invocation, which is
-          # noise that would hide a real one. See that step for why it is needed.
-          DUMMY='--set secrets.values.ehrbase.SECURITY_AUTHPASSWORD=ci-render-check'
+          # Same dummy secrets as the render step below — without them lint emits
+          # "missing required values" warnings per invocation, which is
+          # noise that would hide a real one. See that step for why they exist.
+          DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
           helm lint "$CHART_DIR" $DUMMY
           for f in hetzner dev; do
             echo "── lint values-$f ──"
@@ -54,16 +54,18 @@ jobs:
       - name: helm template render-check
         run: |
           set -e
-          # A DUMMY EHRbase password is required for any render to succeed:
-          # configmaps.yaml renders cdrs.yml for the openFHIR interceptor and
-          # calls `required` on secrets.values.ehrbase.SECURITY_AUTHPASSWORD.
-          # Terraform always supplies the real one (set_sensitive in
-          # modules/k8s-apps), so deploys are unaffected — but a bare
-          # `helm template` has no value to substitute and fails outright.
+          # DUMMY keycloak secrets are required for any render to succeed:
+          # configmaps.yaml renders cdrs.yml (hapi-svc client secret) and
+          # keycloak.yaml renders the realm import (all three client secrets),
+          # each behind `required`; values-hetzner.yaml additionally blanks the
+          # dev defaults so a bare hetzner render fails loudly. Terraform always
+          # supplies the real values (set_sensitive in modules/k8s-apps), so
+          # deploys are unaffected — but a bare `helm template` has nothing to
+          # substitute and fails outright.
           #
-          # The value is meaningless and never leaves this runner; it exists so
-          # the templates can be exercised at all.
-          DUMMY='--set secrets.values.ehrbase.SECURITY_AUTHPASSWORD=ci-render-check'
+          # The values are meaningless and never leave this runner; they exist
+          # so the templates can be exercised at all.
+          DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
 
           # Render must produce valid, non-empty YAML for both openFHIR modes and
           # for each per-cloud values file.

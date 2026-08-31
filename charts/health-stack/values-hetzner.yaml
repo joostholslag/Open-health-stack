@@ -24,6 +24,16 @@ ingress:
     enabled: true
     clusterIssuer: letsencrypt-prod
     secretName: health-stack-tls
+  # ON here (unlike the chart default) because this is the environment actually
+  # published to the internet. HAPI and openFHIR have no auth of their own, so
+  # without this /fhir accepts anonymous writes — which reach EHRbase through
+  # the openFHIR interceptor, around EHRbase's own token validation. Enforced by
+  # ingress-nginx auth-url subrequests to oauth2-proxy (Bearer JWTs from the
+  # freshehr Keycloak realm). Get a token with the client_credentials flow:
+  #   terraform output -raw kc_api_client_secret   # then POST to
+  #   https://<domain>/auth/realms/freshehr/protocol/openid-connect/token
+  auth:
+    enabled: true
 
 # Let cert-manager + this ClusterIssuer be created by the chart if Terraform
 # didn't already create one. (Terraform's k8s-apps installs cert-manager itself;
@@ -39,7 +49,7 @@ images:
     repository: openfhir/hapi-openfhir
     tag: v0.1.0
   ipsMappings:
-    repository: openfhir/fhirconnect-ips-mappings
+    repository: openfhir/fhirconnect-eps-mappings
     tag: v0.1.0
 
 # Production HAPI sizing (matches patch-hapi-resources.yaml) + point HAPI at the
@@ -57,14 +67,35 @@ hapi:
       cpu: "2"
       memory: "2Gi"
 
-# Larger Postgres volumes for prod (matches patch-postgres-storage.yaml: 20Gi).
+# Larger Postgres volume for prod (matches patch-postgres-storage.yaml: 20Gi).
+# There is ONE shared Postgres StatefulSet holding all three databases (ehrbase,
+# hapi, openfhir), so this is a single flat key. It previously nested under
+# `ehrbase:`/`openfhir:`, which the chart never reads — those overrides were
+# silently ignored and prod rendered the 5Gi default.
+#
+# NOTE: storage is a volumeClaimTemplate field. Raising it here does NOT resize an
+# existing PVC — Kubernetes forbids that change on a live StatefulSet. On an
+# already-deployed cluster, expand the PVC directly (hcloud-volumes supports it):
+#   kubectl -n health-stack patch pvc data-postgres-0 \
+#     -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'
 postgres:
-  ehrbase:
-    storage: 20Gi
-  openfhir:
-    storage: 20Gi
+  storage: 20Gi
 
 # Secrets are created out-of-band in prod (secret manager / sealed-secrets /
-# External Secrets). Keep create=false.
+# External Secrets). Keep create=false. (Terraform's k8s-apps module flips
+# create=true and supplies every value from random_password resources.)
+#
+# The keycloak client secrets are blanked here ON PURPOSE: values.yaml carries
+# fixed dev defaults (mirroring the compose stack), and blanking them makes a
+# bare `helm install -f values-hetzner.yaml` fail the render (`required`) rather
+# than silently shipping dev credentials to the internet-facing environment.
 secrets:
   create: false
+  values:
+    keycloak:
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ""
+      KC_DB_PASSWORD: ""
+      API_CLIENT_SECRET: ""
+      HAPI_SVC_SECRET: ""
+      OAUTH2_PROXY_CLIENT_SECRET: ""
+      OAUTH2_PROXY_COOKIE_SECRET: ""

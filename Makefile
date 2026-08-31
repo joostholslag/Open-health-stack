@@ -42,7 +42,7 @@ build: ## Build the custom HAPI image (layers the interceptor JAR)
 	$(COMPOSE) build hapi
 
 .PHONY: up
-up: env certs ## Bring up the whole compose stack (5 services)
+up: env certs ## Bring up the whole compose stack (7 services)
 	$(COMPOSE) up -d
 
 .PHONY: down
@@ -70,13 +70,29 @@ images: ## Build both custom images (IMAGE_ORG/IMAGE_TAG override the defaults)
 	@# hapi-openfhir needs the interceptor JAR in docker/hapi/extra-classes/ first.
 	@test -n "$$(ls $(DOCKER_DIR)/hapi/extra-classes/*.jar 2>/dev/null)" || { echo "ERROR: no interceptor JAR in $(DOCKER_DIR)/hapi/extra-classes/ — see README blockers"; exit 1; }
 	docker build -t $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG) $(DOCKER_DIR)/hapi
-	docker build -f $(DOCKER_DIR)/openfhir/bootstrap.Dockerfile -t $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG) $(DOCKER_DIR)/openfhir
-	@echo "Built: $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)  $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG)"
+	docker build -f $(DOCKER_DIR)/openfhir/bootstrap.Dockerfile -t $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG) $(DOCKER_DIR)/openfhir
+	@echo "Built: $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)  $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)"
 
 .PHONY: images-push
 images-push: images ## Build then push both images to Docker Hub (needs `docker login`)
 	docker push $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)
-	docker push $(IMAGE_ORG)/fhirconnect-ips-mappings:$(IMAGE_TAG)
+	docker push $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)
+
+.PHONY: token
+token: ## Print a Bearer access token from Keycloak (client_credentials, api-client)
+	@# sed extraction, not jq: keep the Makefile free of extra host dependencies.
+	@#
+	@# The openFHIR per-API scopes are OPTIONAL client scopes (attaching custom
+	@# scopes as defaults at realm-import time detaches the built-ins and the
+	@# token loses realm_access.roles — the EHRbase USER role), so they must be
+	@# requested explicitly via scope=. Requesting them costs nothing for the
+	@# EHRbase/HAPI routes, which ignore the scope claim.
+	@curl -sS -X POST http://localhost:8081/auth/realms/freshehr/protocol/openid-connect/token \
+		-d grant_type=client_credentials \
+		-d client_id=$${KC_API_CLIENT_ID:-api-client} \
+		-d client_secret=$${KC_API_CLIENT_SECRET:-dev-api-client-secret} \
+		--data-urlencode "scope=$${KC_TOKEN_SCOPES:-opt.c opt.r opt.u opt.d fc.c fc.r fc.u fc.d conceptmap.c conceptmap.r conceptmap.u conceptmap.d openfhir.map openfhir.insights}" \
+	| sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
 
 .PHONY: template
 template: ## Upload every operational template (OPT) in the bootstrap dir into EHRbase (required once per fresh CDR)
@@ -89,45 +105,68 @@ template: ## Upload every operational template (OPT) in the bootstrap dir into E
 	@# is the single source of truth feeding openFHIR, EHRbase and the UI, and it now
 	@# carries more than one template. Adding an OPT there must not also require
 	@# editing this target.
-	@found=0; \
+	@#
+	@# Routed through nginx (https, -k: self-signed dev cert) with a Bearer token —
+	@# EHRbase runs as an OAuth2 resource server (SECURITY_AUTHTYPE=OAUTH).
+	@TOKEN=$$($(MAKE) --no-print-directory token); \
+	[ -n "$$TOKEN" ] || { echo "ERROR: could not fetch a token from Keycloak (is the stack up?)"; exit 1; }; \
+	found=0; \
 	for opt in "$(DOCKER_DIR)"/openfhir/bootstrap/*.opt; do \
 		[ -e "$$opt" ] || continue; \
 		found=1; \
 		printf '  %s -> HTTP ' "$$(basename "$$opt")"; \
-		curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
-			-X POST http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4 \
+		curl -sSk -H "Authorization: Bearer $$TOKEN" \
+			-X POST https://localhost/ehrbase/rest/openehr/v1/definition/template/adl1.4 \
 			-H 'Content-Type: application/xml' -H 'Accept: application/xml' \
 			--data-binary @"$$opt" \
 			-o /dev/null -w '%{http_code}\n'; \
 	done; \
-	[ "$$found" = 1 ] || echo "  (no *.opt in $(DOCKER_DIR)/openfhir/bootstrap)"
-	@echo "  templates in EHRbase:"; curl -sS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} \
+	[ "$$found" = 1 ] || echo "  (no *.opt in $(DOCKER_DIR)/openfhir/bootstrap)"; \
+	echo "  templates in EHRbase:"; curl -sSk -H "Authorization: Bearer $$TOKEN" \
 		-H 'Accept: application/json' \
-		http://localhost:8082/ehrbase/rest/openehr/v1/definition/template/adl1.4
+		https://localhost/ehrbase/rest/openehr/v1/definition/template/adl1.4
 
 .PHONY: bootstrap
 bootstrap: ## Make openFHIR re-scan its bootstrap dir (no restart needed)
 	@# BootstrapController rescans openfhir.bootstrap.dir in place: new files are
 	@# created, changed files updated, unchanged ones skipped. This is what picks up
-	@# a mapping YAML or an OPT added after the engine started — `make template`
-	@# only loads EHRbase, which knows nothing about FHIR Connect.
-	@curl -sS -X POST 'http://localhost:8083/$$bootstrap' \
+	@# a mapping YAML or an OPT added after the engine started — `make template` only
+	@# loads EHRbase, which knows nothing about FHIR Connect.
+	@#
+	@# RESOLVED (verified 2026-08-31 against a running engine): $$bootstrap scans
+	@# only *.yml and *.opt — the ledger shows MODEL/CONTEXT/OPT rows but zero
+	@# CONCEPTMAP rows, and a mapping run then fails with "No such id: null,
+	@# url: ... ConceptMap exists. Terminology translation not possible." The
+	@# `conceptmaps` target below (once removed on the opposite assumption) is
+	@# therefore required and runs as part of this target.
+	@#
+	@# NOTE (openfhir.protected): with the engine as a resource server, data
+	@# loaded via these authenticated calls lands under the token's `tenant`
+	@# claim (freshehr). The engine's own STARTUP bootstrap runs outside any
+	@# request context, writes under the internal fallback tenant, and is
+	@# invisible to freshehr callers — this target is the canonical loading path.
+	@TOKEN=$$($(MAKE) --no-print-directory token); \
+	[ -n "$$TOKEN" ] || { echo "ERROR: could not fetch a token from Keycloak (is the stack up?)"; exit 1; }; \
+	curl -sSk -H "Authorization: Bearer $$TOKEN" -X POST 'https://localhost/openfhir/$$bootstrap' \
 		-o /dev/null -w "  bootstrap -> HTTP %{http_code}\n"
 	@$(MAKE) --no-print-directory conceptmaps
 
 .PHONY: conceptmaps
 conceptmaps: ## Load the *_conceptmap.json terminology maps into openFHIR
 	@# $$bootstrap only scans *.yml and *.opt, so the ConceptMaps sitting next to the
-	@# mappers are never loaded by it. Without them a mapping run fails with
-	@# "No such id: null, url: ... ConceptMap exists. Terminology translation not
-	@# possible."
+	@# mappers are never loaded by it (verified — see the bootstrap target). Without
+	@# them a mapping run fails with "No such id: null, url: ... ConceptMap exists.
+	@# Terminology translation not possible."
 	@#
 	@# Idempotent, but noisily so: re-posting an existing map answers 500 with
 	@# "ConceptMap with this url ... already exists", not a 409. That is a conflict,
 	@# not a failure, so it is reported as "already loaded" rather than being allowed
 	@# to look like a broken bootstrap.
-	@for cm in $$(find "$(DOCKER_DIR)/openfhir/bootstrap" -name '*_conceptmap.json' | sort); do \
-		body=$$(curl -sS -X POST http://localhost:8083/terminology/fhir/ConceptMap \
+	@TOKEN=$$($(MAKE) --no-print-directory token); \
+	[ -n "$$TOKEN" ] || { echo "ERROR: could not fetch a token from Keycloak (is the stack up?)"; exit 1; }; \
+	for cm in $$(find "$(DOCKER_DIR)/openfhir/bootstrap" -name '*_conceptmap.json' | sort); do \
+		body=$$(curl -sSk -X POST https://localhost/openfhir/terminology/fhir/ConceptMap \
+			-H "Authorization: Bearer $$TOKEN" \
 			-H 'Content-Type: application/json' --data-binary @"$$cm" \
 			-w '\n%{http_code}'); \
 		code=$$(printf '%s' "$$body" | tail -n1); \
@@ -142,10 +181,23 @@ conceptmaps: ## Load the *_conceptmap.json terminology maps into openFHIR
 	done
 
 .PHONY: smoke
-smoke: ## Run health curls against the running compose stack
-	@echo "── HAPI ──";     curl -fsS http://localhost:8080/fhir/metadata      >/dev/null && echo "OK CapabilityStatement" || echo "FAIL"
-	@echo "── EHRbase ──";  curl -fsS -u $${EHRBASE_AUTH_USER:-ehrbase-user}:$${EHRBASE_AUTH_PASSWORD:-SuperSecretPassword} http://localhost:8082/ehrbase/rest/status >/dev/null && echo "OK status" || echo "FAIL"
-	@echo "── nginx ──";    curl -fsSk https://localhost/fhir/metadata        >/dev/null && echo "OK proxied FHIR" || echo "FAIL"
+smoke: ## Auth matrix against the running stack: data routes must 401 bare / 200 with a Bearer token; health + discovery stay public
+	@TOKEN=$$($(MAKE) --no-print-directory token); \
+	[ -n "$$TOKEN" ] || { echo "FAIL: no token from Keycloak (is the stack up?)"; exit 1; }; \
+	fail=0; \
+	for r in fhir/metadata ehrbase/rest/status openfhir/fc/context; do \
+		no=$$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost/$$r"); \
+		ok=$$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$TOKEN" "https://localhost/$$r"); \
+		[ "$$no" = 401 ] && [ "$$ok" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
+		printf '  %-22s bare:%s (want 401)  bearer:%s (want 200)  %s\n' "/$$r" "$$no" "$$ok" "$$verdict"; \
+	done; \
+	health=$$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/openfhir/health); \
+	[ "$$health" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
+	printf '  %-22s bare:%s (want 200, permitAll)  %s\n' "/openfhir/health" "$$health" "$$verdict"; \
+	disc=$$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/auth/realms/freshehr/.well-known/openid-configuration); \
+	[ "$$disc" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
+	printf '  %-22s %s (want 200)  %s\n' "OIDC discovery" "$$disc" "$$verdict"; \
+	exit $$fail
 
 ## ── Layer 2: Kubernetes (Helm chart) ─────────────────────────────────────────
 ## Set ENV=hetzner|dev (default hetzner). Local iteration uses values-dev.

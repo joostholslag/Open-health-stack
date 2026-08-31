@@ -66,12 +66,15 @@ spec:
           {{- end }}
       volumes:
         - name: config
-          configMap:
-            name: hapi-config        # application.yml (no credentials)
+          secret:
+            # application.yml carries the hapi-svc client secret for the
+            # HAPI→openFHIR hop (openfhir.oauth2 block) — a Secret, not a
+            # ConfigMap, because it contains a credential.
+            secretName: hapi-config
         - name: cdrs
           secret:
-            # Carries the EHRbase basic-auth the interceptor uses — a Secret, not
-            # a ConfigMap, because it contains a credential.
+            # Carries the hapi-svc OAuth client secret the interceptor uses for
+            # the HAPI→EHRbase hop — a Secret for the same reason.
             secretName: hapi-cdrs
 ---
 apiVersion: v1

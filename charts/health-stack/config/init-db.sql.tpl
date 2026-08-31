@@ -27,3 +27,14 @@ CREATE USER openfhir WITH ENCRYPTED PASSWORD '__OPENFHIR_DB_PASS__';
 CREATE DATABASE openfhir OWNER openfhir;
 GRANT ALL PRIVILEGES ON DATABASE openfhir TO openfhir;
 ALTER ROLE openfhir SET search_path TO public;
+
+-- ── Keycloak (realm + session store) ────────────────────────────────────────
+-- MUST stay the LAST database this script creates (mirrors docker/ehrbase/
+-- init-db.sql, whose postgres healthcheck greps for it there).
+-- ⚠ Init scripts only run on FIRST boot of an empty PVC. On a cluster that was
+-- deployed BEFORE this block existed, create the role/DB manually instead:
+--   kubectl -n health-stack exec postgres-0 -- psql -U postgres -c "CREATE USER keycloak ..."
+CREATE USER keycloak WITH ENCRYPTED PASSWORD '__KEYCLOAK_DB_PASS__';
+CREATE DATABASE keycloak OWNER keycloak;
+GRANT ALL PRIVILEGES ON DATABASE keycloak TO keycloak;
+ALTER ROLE keycloak SET search_path TO public;

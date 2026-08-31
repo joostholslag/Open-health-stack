@@ -1,0 +1,103 @@
+{{- if .Values.oauth2Proxy.enabled }}
+{{- /*
+oauth2-proxy — the edge Bearer-token validator behind ingress-nginx's auth-url
+annotations on /fhir and /openfhir (k8s equivalent of the compose nginx
+`auth_request` → oauth2-proxy pair).
+
+Pure Bearer validation (skip-jwt-bearer-tokens): the subrequest's JWT is checked
+for signature, issuer and aud=oauth2-proxy; no session/cookie flow is required
+for API callers. The /oauth2 ingress path additionally exposes the browser
+sign-in flow for the auth-signin redirect.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "oauth2-proxy") | nindent 4 }}
+spec:
+  replicas: {{ .Values.oauth2Proxy.replicas }}
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "oauth2-proxy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "oauth2-proxy") | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      containers:
+        - name: oauth2-proxy
+          image: {{ include "health-stack.image" (dict "image" .Values.oauth2Proxy.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.oauth2Proxy.image) }}
+          ports:
+            - name: http
+              containerPort: 4180
+          env:
+            - name: OAUTH2_PROXY_PROVIDER
+              value: keycloak-oidc
+            # The PUBLIC canonical issuer — discovery is fetched through the LB
+            # (hairpin). The pod crash-loops harmlessly until Keycloak + DNS are
+            # reachable; k8s self-heals.
+            - name: OAUTH2_PROXY_OIDC_ISSUER_URL
+              value: {{ include "health-stack.oidcIssuer" . | quote }}
+            - name: OAUTH2_PROXY_CLIENT_ID
+              value: oauth2-proxy
+            - name: OAUTH2_PROXY_REDIRECT_URL
+              value: {{ printf "https://%s/oauth2/callback" .Values.ingress.host | quote }}
+            # Pure Bearer validation for the auth-url subrequests.
+            - name: OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS
+              value: "true"
+            # Service-account tokens carry no email claim; identify by `sub` and
+            # accept any domain. Insecure-unverified is fine: the JWT signature +
+            # issuer + audience checks are what gate access here.
+            - name: OAUTH2_PROXY_OIDC_EMAIL_CLAIM
+              value: sub
+            - name: OAUTH2_PROXY_EMAIL_DOMAINS
+              value: "*"
+            - name: OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL
+              value: "true"
+            # auth_request-only deployment: no real upstream behind the proxy.
+            - name: OAUTH2_PROXY_UPSTREAMS
+              value: static://202
+            - name: OAUTH2_PROXY_REVERSE_PROXY
+              value: "true"
+            - name: OAUTH2_PROXY_HTTP_ADDRESS
+              value: 0.0.0.0:4180
+          envFrom:
+            # OAUTH2_PROXY_CLIENT_SECRET + OAUTH2_PROXY_COOKIE_SECRET.
+            - secretRef:
+                name: {{ .Values.secretNames.oauth2Proxy }}
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          {{- with .Values.oauth2Proxy.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "oauth2-proxy") | nindent 4 }}
+spec:
+  type: {{ .Values.oauth2Proxy.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "oauth2-proxy") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.oauth2Proxy.service.port }}
+      targetPort: 4180
+{{- end }}

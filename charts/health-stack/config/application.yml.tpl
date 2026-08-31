@@ -1,6 +1,10 @@
 # HAPI FHIR + openFHIR interceptor configuration.
 # Mounted read-only at /app/config/application.yml.
 #
+# Rendered by templates/configmaps.yaml with __KC_HAPI_SVC_SECRET__ substituted
+# from secrets.values.keycloak.HAPI_SVC_SECRET — it carries a credential, so it
+# ships as a Secret (same pattern as cdrs.yml.tpl), NOT a ConfigMap.
+#
 # Values default to the local docker-compose topology but honour env overrides
 # (${VAR:default}).
 spring:
@@ -27,13 +31,27 @@ hapi:
     custom_interceptor_classes: com.syntaric.hapi.PatientInterceptor
 
 # ── openFHIR engine ────────────────────────────────────────────────────────
-# The in-cluster engine (compose service / k8s Service `openfhir`). No oauth2
-# block: the interceptor only attempts a token request when token-url, client-id
-# AND client-secret are all non-blank (ClientCredentialsConfig.isComplete()), and
-# the local engine is unauthenticated. Adding partial OAuth config here makes
-# every store fail with "Token request failed ... invalid_client".
+# The in-cluster engine (k8s Service `openfhir`), running as an OAuth2 resource
+# server (openfhir.protected=true) — the HAPI→openFHIR hop is authenticated
+# with the same hapi-svc client_credentials account as the HAPI→EHRbase hop
+# (cdrs.yml). token-url is the IN-CLUSTER Keycloak Service on purpose — see the
+# cdrs.yml.tpl comment (canonical `iss` is stamped regardless of Host header).
+#
+# ⚠ The interceptor's OAuth rule is ALL-OR-NONE: it only attempts a token
+# request when token-url, client-id AND client-secret are all non-blank
+# (ClientCredentialsConfig.isConfigured()). A partial block makes every store
+# fail with "Token request failed ... invalid_client" — never set a subset.
+#
+# scope=openfhir.map is the one scope the mapping API (/openfhir/tofhir,
+# /openfhir/toopenehr) demands; hapi-svc holds it as a default client scope,
+# the explicit request keeps the hop least-privilege and self-documenting.
 openfhir:
   base-url: ${OPENFHIR_BASE_URL:http://openfhir:8080}
+  oauth2:
+    token-url: http://keycloak:8080/auth/realms/freshehr/protocol/openid-connect/token
+    client-id: hapi-svc
+    client-secret: __KC_HAPI_SVC_SECRET__
+    scope: openfhir.map
 
 # ── Interceptor routing ──────────────────────────────────────────────────────
 interceptor:

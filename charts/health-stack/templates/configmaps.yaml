@@ -4,25 +4,35 @@ whole rendered template is hashed by the checksum/config annotation on each pod
 (see _helpers.tpl → health-stack.configChecksum), which reproduces Kustomize's
 "roll pods when config changes" behavior without relying on name-suffix hashing.
 
-Two of these files carry credentials, so they are rendered from *.tpl with
+Three of these files carry credentials, so they are rendered from *.tpl with
 __PLACEHOLDER__ tokens replaced from .Values.secrets.values and shipped as
 SECRETS rather than ConfigMaps:
 
-  - cdrs.yml    → hapi-cdrs Secret       (interceptor's EHRbase basic-auth)
+  - application.yml → hapi-config Secret  (interceptor's hapi-svc OAuth client secret,
+                                           openfhir.oauth2 block)
+  - cdrs.yml    → hapi-cdrs Secret       (interceptor's hapi-svc OAuth client secret)
   - init-db.sql → postgres-init-sql Secret (CREATE USER ... PASSWORD)
 
-Credential-free config stays in plain ConfigMaps.
+(The Keycloak realm import is a fourth such file — rendered in keycloak.yaml,
+with its own checksum/realm annotation on the keycloak pod.)
+
+Credential-free config stays in plain ConfigMaps — openfhir-application.yaml
+is still rendered from a .tpl (the issuer needs __DOMAIN__), but contains no
+secret.
 */}}
 {{- $v := .Values.secrets.values -}}
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: hapi-config
   labels:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hapi") | nindent 4 }}
-data:
+type: Opaque
+stringData:
   application.yml: |-
-{{ .Files.Get "config/application.yml" | indent 4 }}
+{{ .Files.Get "config/application.yml.tpl"
+     | replace "__KC_HAPI_SVC_SECRET__" (required "secrets.values.keycloak.HAPI_SVC_SECRET is required" $v.keycloak.HAPI_SVC_SECRET)
+     | indent 4 }}
 ---
 apiVersion: v1
 kind: Secret
@@ -34,8 +44,7 @@ type: Opaque
 stringData:
   cdrs.yml: |-
 {{ .Files.Get "config/cdrs.yml.tpl"
-     | replace "__EHRBASE_AUTH_USER__" (default "ehrbase-user" $v.ehrbase.SECURITY_AUTHUSER)
-     | replace "__EHRBASE_AUTH_PASSWORD__" (required "secrets.values.ehrbase.SECURITY_AUTHPASSWORD is required" $v.ehrbase.SECURITY_AUTHPASSWORD)
+     | replace "__KC_HAPI_SVC_SECRET__" (required "secrets.values.keycloak.HAPI_SVC_SECRET is required" $v.keycloak.HAPI_SVC_SECRET)
      | indent 4 }}
 ---
 apiVersion: v1
@@ -50,6 +59,7 @@ stringData:
 {{ .Files.Get "config/init-db.sql.tpl"
      | replace "__HAPI_DB_PASS__" (required "secrets.values.hapi.HAPI_DB_PASS is required" $v.hapi.HAPI_DB_PASS)
      | replace "__OPENFHIR_DB_PASS__" (required "secrets.values.openfhir.OPENFHIR_DB_PASS is required" $v.openfhir.OPENFHIR_DB_PASS)
+     | replace "__KEYCLOAK_DB_PASS__" (required "secrets.values.keycloak.KC_DB_PASSWORD is required" $v.keycloak.KC_DB_PASSWORD)
      | indent 4 }}
 ---
 apiVersion: v1
@@ -60,4 +70,6 @@ metadata:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 4 }}
 data:
   application.yaml: |-
-{{ .Files.Get "config/openfhir-application.yaml" | indent 4 }}
+{{ .Files.Get "config/openfhir-application.yaml.tpl"
+     | replace "__DOMAIN__" .Values.ingress.host
+     | indent 4 }}

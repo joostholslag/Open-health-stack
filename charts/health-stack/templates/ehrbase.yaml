@@ -32,19 +32,24 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            {{- if and .Values.keycloak.enabled (not (hasKey .Values.ehrbase.env "SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI")) }}
+            # The canonical PUBLIC issuer (KC_HOSTNAME). Spring fetches its OIDC
+            # metadata at startup — through the LB (hairpin), so EHRbase
+            # crash-loops harmlessly until Keycloak + DNS are reachable.
+            - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI
+              value: {{ include "health-stack.oidcIssuer" . | quote }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ .Values.secretNames.ehrbase }}
+          # Probes hit the unauthenticated management health endpoint: in OAUTH
+          # mode /ehrbase/rest/status requires a Bearer token, which the kubelet
+          # cannot supply (the old BASIC-mode probes injected an Authorization
+          # header rendered from the Secret values).
           readinessProbe:
             httpGet:
               path: {{ .Values.ehrbase.readiness.path }}
               port: 8080
-              httpHeaders:
-                # /ehrbase/rest/status sits behind basic auth (SECURITY_AUTHTYPE=BASIC),
-                # so an unauthenticated probe gets 401 and the kubelet restart-loops a
-                # perfectly healthy pod. Send the same credentials the Secret sets.
-                - name: Authorization
-                  value: {{ printf "%s:%s" (default "ehrbase-user" .Values.secrets.values.ehrbase.SECURITY_AUTHUSER) (default "" .Values.secrets.values.ehrbase.SECURITY_AUTHPASSWORD) | b64enc | printf "Basic %s" | quote }}
             initialDelaySeconds: {{ .Values.ehrbase.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.ehrbase.readiness.periodSeconds }}
             failureThreshold: {{ .Values.ehrbase.readiness.failureThreshold }}
@@ -52,12 +57,6 @@ spec:
             httpGet:
               path: {{ .Values.ehrbase.liveness.path }}
               port: 8080
-              httpHeaders:
-                # /ehrbase/rest/status sits behind basic auth (SECURITY_AUTHTYPE=BASIC),
-                # so an unauthenticated probe gets 401 and the kubelet restart-loops a
-                # perfectly healthy pod. Send the same credentials the Secret sets.
-                - name: Authorization
-                  value: {{ printf "%s:%s" (default "ehrbase-user" .Values.secrets.values.ehrbase.SECURITY_AUTHUSER) (default "" .Values.secrets.values.ehrbase.SECURITY_AUTHPASSWORD) | b64enc | printf "Basic %s" | quote }}
             initialDelaySeconds: {{ .Values.ehrbase.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.ehrbase.liveness.periodSeconds }}
           {{- with .Values.ehrbase.resources }}

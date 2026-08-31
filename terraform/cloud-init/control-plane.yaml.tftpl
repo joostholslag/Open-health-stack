@@ -1,6 +1,7 @@
 #cloud-config
 # k3s control-plane bootstrap.
-# Templated vars: k3s_version, k3s_token, node_ip (private), flannel_iface.
+# Templated vars: k3s_version, k3s_token, node_ip (private), flannel_iface,
+# network_cidr, private_gateway.
 # The public IP (TLS SAN) is fetched at boot from the Hetzner metadata service,
 # since it isn't known to Terraform before the server exists.
 package_update: true
@@ -21,6 +22,18 @@ runcmd:
       ethernets:
         ${flannel_iface}:
           dhcp4: true
+          # The private network's DHCP server pushes a route for the metadata
+          # service (169.254.169.254) via the private gateway, which blackholes it —
+          # on Hetzner that address is only reachable over the PUBLIC interface.
+          # Accepting it breaks the public-IP lookup below. Take the address and
+          # nothing else; eth0 keeps the default route and the metadata route.
+          dhcp4-overrides:
+            use-routes: false
+          # use-routes: false drops ALL DHCP routes, including the private-network
+          # one that agents and flannel need — so re-add that explicitly.
+          routes:
+            - to: ${network_cidr}
+              via: ${private_gateway}
     NETPLAN
     chmod 600 /etc/netplan/60-private.yaml
     netplan apply
@@ -29,12 +42,22 @@ runcmd:
       sleep 2
     done
 
-  # Discover this node's public IPv4 from the Hetzner metadata service.
-  - export PUBLIC_IP=$(curl -sf http://169.254.169.254/hetzner/v1/metadata/public-ipv4)
   # Install k3s server. Disable the bundled Traefik + ServiceLB — we run
   # ingress-nginx and a Hetzner LB instead. cloud-provider=external so the
   # Hetzner CCM/CSI (installed by the k8s-apps module) manage nodes/volumes.
+  #
+  # PUBLIC_IP is discovered from the Hetzner metadata service in THIS block, not a
+  # preceding one: each runcmd entry runs in its own shell, so an `export` in an
+  # earlier entry is gone by the time this one runs. An empty --node-external-ip
+  # makes k3s refuse to start ("invalid node-external-ip: invalid ip format ''")
+  # and it retries forever rather than failing, so bail out loudly instead.
   - |
+    PUBLIC_IP=""
+    for i in $(seq 1 30); do
+      PUBLIC_IP=$(curl -sf --max-time 5 --interface eth0 http://169.254.169.254/hetzner/v1/metadata/public-ipv4) && [ -n "$PUBLIC_IP" ] && break
+      sleep 2
+    done
+    [ -n "$PUBLIC_IP" ] || { echo "FATAL: could not determine public IPv4 from metadata service" >&2; exit 1; }
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_TOKEN="${k3s_token}" \

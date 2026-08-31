@@ -13,6 +13,13 @@ spring:
     url: jdbc:postgresql://postgres:5432/openfhir
     username: ${OPENFHIR_DB_USER:openfhir}
     password: ${OPENFHIR_DB_PASS:openfhir}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Same canonical in-network issuer EHRbase validates against — must
+          # match the `iss` Keycloak stamps into tokens (KC_HOSTNAME).
+          issuer-uri: http://keycloak:8080/auth/realms/freshehr
 
 server:
   port: 8080
@@ -21,6 +28,21 @@ server:
     include-message: always
 
 openfhir:
+  # Native OAuth2 resource server (vendor-supported): the engine validates
+  # Bearer tokens itself with fine-grained per-API scopes (SCOPE_opt.*, fc.*,
+  # conceptmap.*, openfhir.map — see the freshehr realm's client scopes), so
+  # /openfhir carries NO nginx auth_request (mirrors /ehrbase). /health,
+  # /status, swagger and / stay permitAll — probes are unaffected.
+  #
+  # Multi-tenancy: the engine keys OPTs/mappers/contexts by the JWT `tenant`
+  # claim (fallback: `sub`). Every freshehr client carries a hardcoded
+  # tenant=freshehr claim mapper so they all share one store. NOTE: the
+  # STARTUP bootstrap below runs outside any request context and writes under
+  # the engine's internal fallback tenant ("123") — invisible to freshehr
+  # tokens. `make bootstrap` (POST /$bootstrap with a token) is the canonical
+  # loading path in protected mode.
+  protected: true
+
   # postgres | mongo — this stack runs Postgres (the shared `postgres` service).
   db:
     type: postgres

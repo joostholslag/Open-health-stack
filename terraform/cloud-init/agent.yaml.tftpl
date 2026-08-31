@@ -1,7 +1,7 @@
 #cloud-config
 # k3s agent bootstrap — joins the control-plane over the private network.
 # Templated vars: k3s_version, k3s_token, server_url (https://<cp-private-ip>:6443),
-# node_ip (private), flannel_iface.
+# node_ip (private), flannel_iface, network_cidr, private_gateway.
 package_update: true
 packages:
   - curl
@@ -20,6 +20,18 @@ runcmd:
       ethernets:
         ${flannel_iface}:
           dhcp4: true
+          # The private network's DHCP server pushes a route for the metadata
+          # service (169.254.169.254) via the private gateway, which blackholes it —
+          # on Hetzner that address is only reachable over the PUBLIC interface.
+          # The agent doesn't read metadata at boot, but the Hetzner CCM/CSI pods
+          # scheduled here do. Take the address and nothing else.
+          dhcp4-overrides:
+            use-routes: false
+          # use-routes: false drops ALL DHCP routes, including the private-network
+          # one this node needs to reach the control-plane API and flannel peers.
+          routes:
+            - to: ${network_cidr}
+              via: ${private_gateway}
     NETPLAN
     chmod 600 /etc/netplan/60-private.yaml
     netplan apply

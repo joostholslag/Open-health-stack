@@ -83,9 +83,39 @@ resource "random_password" "openfhir_db" {
   length  = 32
   special = false
 }
-# Basic-auth EHRbase enforces on its REST API (reachable at /ehrbase through the
-# ingress) and that the HAPI interceptor uses via cdrs.yml.
-resource "random_password" "ehrbase_api" {
+# ── Keycloak / OAuth2 credentials ────────────────────────────────────────────
+# EHRbase and the openFHIR engine validate Bearer tokens natively
+# (SECURITY_AUTHTYPE=OAUTH / openfhir.protected) and the /fhir ingress route
+# is gated by oauth2-proxy (auth-url), so the
+# old ehrbase_api / api_basic_auth basic-auth passwords are gone. What's needed
+# instead: the Keycloak admin + DB credentials, one client secret per OIDC
+# client (substituted into the realm import AND handed to each consumer, so
+# they always agree), and oauth2-proxy's cookie-encryption secret.
+resource "random_password" "keycloak_admin" {
+  length  = 32
+  special = false
+}
+resource "random_password" "keycloak_db" {
+  length  = 32
+  special = false
+}
+# client_credentials service account for external API callers (`terraform
+# output -raw kc_api_client_secret` to retrieve).
+resource "random_password" "kc_api_client" {
+  length  = 32
+  special = false
+}
+# client_credentials service account for the HAPI interceptor's HAPI→EHRbase hop.
+resource "random_password" "kc_hapi_svc" {
+  length  = 32
+  special = false
+}
+resource "random_password" "oauth2_proxy_client" {
+  length  = 32
+  special = false
+}
+# MUST be exactly 16, 24 or 32 bytes — oauth2-proxy rejects other lengths.
+resource "random_password" "oauth2_proxy_cookie" {
   length  = 32
   special = false
 }
@@ -106,7 +136,13 @@ module "apps" {
   ehrbase_db_admin_password = random_password.ehrbase_db_admin.result
   hapi_db_password          = random_password.hapi_db.result
   openfhir_db_password      = random_password.openfhir_db.result
-  ehrbase_api_password      = random_password.ehrbase_api.result
+
+  keycloak_admin_password    = random_password.keycloak_admin.result
+  keycloak_db_password       = random_password.keycloak_db.result
+  kc_api_client_secret       = random_password.kc_api_client.result
+  kc_hapi_svc_secret         = random_password.kc_hapi_svc.result
+  oauth2_proxy_client_secret = random_password.oauth2_proxy_client.result
+  oauth2_proxy_cookie_secret = random_password.oauth2_proxy_cookie.result
 
   http_node_port       = 30080
   https_node_port      = 30443

@@ -44,6 +44,9 @@ locals {
   # network shows up as enp7s0 on Ubuntu 24.04 cloud images.
   flannel_iface = "enp7s0"
 
+  # Hetzner's private-network gateway is always the first host of the network range.
+  private_gateway = cidrhost(var.network_cidr, 1)
+
   # Private key used to SSH in and pull the kubeconfig. Falls back to the public
   # key path with the trailing ".pub" stripped.
   ssh_private_key_path = var.ssh_private_key_path != "" ? var.ssh_private_key_path : replace(var.ssh_public_key_path, ".pub", "")
@@ -126,10 +129,12 @@ resource "hcloud_server" "control_plane" {
   # needed as a k3s TLS SAN. cloud-init fetches it at boot from the Hetzner
   # metadata service (169.254.169.254), so no self-reference is required here.
   user_data = templatefile("${path.module}/../../cloud-init/control-plane.yaml.tftpl", {
-    k3s_version   = var.k3s_version
-    k3s_token     = local.k3s_token
-    node_ip       = local.control_plane_ip
-    flannel_iface = local.flannel_iface
+    k3s_version     = var.k3s_version
+    k3s_token       = local.k3s_token
+    node_ip         = local.control_plane_ip
+    flannel_iface   = local.flannel_iface
+    network_cidr    = var.network_cidr
+    private_gateway = local.private_gateway
   })
 
   network {
@@ -158,11 +163,13 @@ resource "hcloud_server" "agent" {
   firewall_ids = [hcloud_firewall.this.id]
 
   user_data = templatefile("${path.module}/../../cloud-init/agent.yaml.tftpl", {
-    k3s_version   = var.k3s_version
-    k3s_token     = local.k3s_token
-    server_url    = "https://${local.control_plane_ip}:6443"
-    node_ip       = local.agent_ips[count.index]
-    flannel_iface = local.flannel_iface
+    k3s_version     = var.k3s_version
+    k3s_token       = local.k3s_token
+    server_url      = "https://${local.control_plane_ip}:6443"
+    node_ip         = local.agent_ips[count.index]
+    flannel_iface   = local.flannel_iface
+    network_cidr    = var.network_cidr
+    private_gateway = local.private_gateway
   })
 
   network {
@@ -205,10 +212,25 @@ resource "null_resource" "kubeconfig" {
     timeout = "5m"
   }
 
+  # Bounded wait: an unbounded `while [ ! -f ... ]` turns any failed bootstrap into
+  # a silent hang that only ends when the operator gives up. Cap it at 5 minutes
+  # (a healthy install lands in ~60-90s) and dump the k3s journal on timeout so the
+  # actual cause shows up in the Terraform output.
   provisioner "remote-exec" {
     inline = [
-      "while [ ! -f /tmp/k3s-ready ]; do echo waiting for k3s; sleep 5; done",
-      "echo k3s ready",
+      <<-EOT
+        for i in $(seq 1 60); do
+          if [ -f /tmp/k3s-ready ]; then echo "k3s ready"; exit 0; fi
+          echo "waiting for k3s"
+          sleep 5
+        done
+        echo "ERROR: k3s did not become ready within 5m" >&2
+        echo "--- cloud-init status ---" >&2
+        cloud-init status --long >&2 2>&1 || true
+        echo "--- k3s journal (last 50) ---" >&2
+        journalctl -u k3s --no-pager -n 50 >&2 2>&1 || true
+        exit 1
+      EOT
     ]
   }
 

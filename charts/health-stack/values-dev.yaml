@@ -29,7 +29,7 @@ images:
     tag: local
     pullPolicy: IfNotPresent
   ipsMappings:
-    repository: openfhir/fhirconnect-ips-mappings
+    repository: openfhir/fhirconnect-eps-mappings
     tag: local
     pullPolicy: IfNotPresent
 
@@ -40,6 +40,13 @@ hapi:
     nodePort: 30080
 
 # Dev convenience: render the example Secrets so pods start without extra steps.
+# This includes the keycloak/oauth2-proxy dev secrets (fixed values mirroring the
+# compose stack). NOTE: EHRbase runs in OAUTH mode and fetches OIDC discovery
+# from https://<ingress.host>/auth/... at startup — on kind that means the
+# ingress must be reachable at the nip.io host, or EHRbase crash-loops until it
+# is (override ehrbase.env.SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUERURI
+# to http://keycloak:8080/auth/realms/freshehr for an ingress-less install —
+# but then Keycloak's KC_HOSTNAME issuer won't match; prefer running the ingress).
 #
 # NOTE: the vendor `openfhir-license` Secret is NEVER rendered by the chart — it
 # holds a licensed artifact. Even on kind you must create it out-of-band or the

@@ -6,16 +6,36 @@ metadata:
   labels:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "health-stack") | nindent 4 }}
   annotations:
-    # NOTE: no rewrite-target here on purpose — HAPI and EHRbase genuinely serve
-    # under /fhir and /ehrbase, so their paths pass through untouched (same as the
-    # compose nginx). Only openFHIR needs its prefix stripped, and a rewrite-target
-    # is per-Ingress, not per-path — so that route lives in its own Ingress below.
+    # This Ingress carries ONLY /fhir. Every nginx.ingress annotation below is
+    # Ingress-scoped, not path-scoped, so each route whose annotation set differs
+    # needs its own object — which is why this chart renders four:
+    #
+    #   health-stack           /fhir           HAPI          — edge OAuth (auth-url), no rewrite
+    #   health-stack-ehrbase   /ehrbase        EHRbase       — NO edge auth, no rewrite
+    #   health-stack-openfhir  /openfhir       openFHIR      — NO edge auth (native), + rewrite
+    #   health-stack-auth      /auth, /oauth2  keycloak/o2p  — public, no rewrite
+    #
+    # No rewrite-target here on purpose: HAPI genuinely serves under /fhir, so the
+    # path passes through untouched (same as the compose nginx). Only openFHIR needs
+    # its prefix stripped.
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
     {{- if .Values.ingress.tls.enabled }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+    {{- if .Values.ingress.auth.enabled }}
+    # HAPI has no application-level auth: unauthenticated /fhir accepts writes on
+    # every resource type, and the openFHIR interceptor forwards matching writes
+    # into EHRbase — bypassing EHRbase's own token validation. Enforce it at the
+    # edge: ingress-nginx sends an auth-url subrequest to oauth2-proxy, which
+    # validates the Bearer JWT (k8s equivalent of the compose auth_request).
+    # Only ingress traffic is affected; the kubelet probes hit the pod directly.
+    nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.oauth2Proxy.service.port }}/oauth2/auth"
+    {{- if .Values.ingress.auth.signin }}
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
+    {{- end }}
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
@@ -36,6 +56,48 @@ spec:
                 name: hapi
                 port:
                   number: {{ .Values.hapi.service.port }}
+{{- end }}
+---
+{{- if .Values.ingress.enabled }}
+{{/*
+Separate Ingress for /ehrbase so it can OPT OUT of the edge auth.
+
+EHRbase already validates every request itself (SECURITY_AUTHTYPE=OAUTH, a
+first-class OAuth2 resource server), which is precisely what /fhir lacks and why
+it needs a gate at the edge. Since auth-url is an Ingress-level annotation,
+leaving /ehrbase on the main Ingress would double-gate an endpoint that
+validates natively — adding failure modes for no security gain (mirrors the
+compose nginx, where /ehrbase carries no auth_request).
+
+So: no auth annotations here. Requests arriving here still have to present a
+Bearer token that EHRbase itself validates against the freshehr realm.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack-ehrbase
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "ehrbase") | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
           - path: /ehrbase
             pathType: Prefix
             backend:
@@ -54,6 +116,11 @@ the prefix must be stripped, exactly as docker/nginx/nginx.conf does with
 `rewrite ^/openfhir/?(.*)$ /$1 break;`. rewrite-target is an Ingress-level
 annotation, so mixing it into the main Ingress would also rewrite /fhir and
 /ehrbase (which must NOT be rewritten). Hence two Ingress objects.
+
+Deliberately NO auth-url here (mirrors /ehrbase): the engine runs as an OAuth2
+resource server (openfhir.protected=true, per-API scopes) and validates every
+request natively — double-gating a native resource server adds failure modes
+for no security gain. /health and /status stay permitAll inside the engine.
 
 The capture group $1 from the regex path below is what rewrite-target consumes.
 */}}
@@ -96,4 +163,61 @@ spec:
                 name: openfhir
                 port:
                   number: {{ .Values.openfhir.service.port }}
+{{- end }}
+---
+{{- if and .Values.ingress.enabled .Values.keycloak.enabled }}
+{{/*
+Fourth Ingress: the PUBLIC auth routes — deliberately no auth annotations.
+
+  /auth    → Keycloak. Token + OIDC discovery endpoints must be reachable by
+             every caller; the admin console has its own login. No rewrite:
+             Keycloak serves under /auth itself (KC_HTTP_RELATIVE_PATH), same
+             as the compose nginx /auth route.
+  /oauth2  → oauth2-proxy. Hosts the browser sign-in flow (/oauth2/start,
+             /oauth2/callback) that the auth-signin annotation redirects to.
+             API callers never touch it — their Bearer tokens are validated
+             in-cluster via the auth-url subrequest.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack-auth
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "keycloak") | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: {{ .Values.keycloak.service.port }}
+          {{- if .Values.oauth2Proxy.enabled }}
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy
+                port:
+                  number: {{ .Values.oauth2Proxy.service.port }}
+          {{- end }}
 {{- end }}

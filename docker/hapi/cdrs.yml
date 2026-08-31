@@ -4,13 +4,19 @@
 # The `local` CDR is the EHRbase container in this compose stack. Additional
 # remote CDRs (OAuth2 / basic) can be added following the shapes below.
 
+# EHRbase runs as an OAuth2 resource server (SECURITY_AUTHTYPE=OAUTH), so the
+# interceptor fetches a client_credentials token from the in-cluster Keycloak
+# (client hapi-svc, realm role USER — fixed dev secret, mirrored in the
+# committed realm import docker/keycloak/realm-freshehr.json).
 - id: local
   name: EHRbase (local)
   baseUrl: http://ehrbase:8080/ehrbase/rest
-  authMethod: basic
-  basicAuth:
-    username: ehrbase-user
-    password: SuperSecretPassword
+  authMethod: oauth2
+  oauth2:
+    tokenUrl: http://keycloak:8080/auth/realms/freshehr/protocol/openid-connect/token
+    clientId: hapi-svc
+    clientSecret: dev-hapi-svc-secret
+    authMethod: basic
 
 # ── Examples of additional remote CDRs (disabled; edit and uncomment) ────────
 #

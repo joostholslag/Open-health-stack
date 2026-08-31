@@ -2,11 +2,13 @@
 #
 #   * openfhir/hapi-openfhir             = official HAPI + the openFHIR interceptor
 #                                          JAR (interceptor built from source here)
-#   * openfhir/fhirconnect-ips-mappings  = data-only image: the IPS FHIRConnect
+#   * openfhir/fhirconnect-eps-mappings  = data-only image: the EPS FHIRConnect
 #                                          mappings + OPT, copied into the openFHIR
 #                                          pod by an initContainer
 #
-# The Helm chart references both via `images.hapi` / `images.ipsMappings`.
+# The Helm chart references both via `images.hapi` / `images.ipsMappings`. That
+# values key keeps its historical `ips` spelling — renaming it would break existing
+# overrides, and it names a chart field, not the registry repository.
 #
 # Requires two repo secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access token
 # from hub.docker.com → Account Settings → Personal access tokens, with Read/Write).
@@ -73,7 +75,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  ips-mappings:
+  eps-mappings:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,7 +90,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_ORG }}/fhirconnect-ips-mappings
+          images: ${{ env.IMAGE_ORG }}/fhirconnect-eps-mappings
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}

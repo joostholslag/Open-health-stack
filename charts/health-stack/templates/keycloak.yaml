@@ -1,0 +1,155 @@
+{{- if .Values.keycloak.enabled }}
+{{- /*
+Keycloak (OIDC IdP) — Deployment + Service + realm-import Secret.
+
+The realm import is rendered from config/realm-freshehr.json.tpl with the client
+secrets substituted from secrets.values.keycloak (same __PLACEHOLDER__ pattern
+as cdrs.yml.tpl), so the realm and every consumer of a client secret always
+agree. Substituted realm JSON contains credentials — a Secret, not a ConfigMap.
+
+Realm-import constraints learned in the compose phase (see
+docker/docker-compose.yml keycloak service):
+  - Defining a top-level `clientScopes` array REPLACES the realm's entire
+    scope set: the built-ins (roles, profile, email, web-origins, acr, basic)
+    are never created, so realm_access.roles vanishes from every token no
+    matter how clients attach scopes. Hence: the openFHIR scopes attach as
+    optionalClientScopes (same-file scopes DO attach) and are requested
+    explicitly via scope=, while realm_access.roles + the oauth2-proxy
+    audience are restored via per-client protocol mappers.
+  - Same-file clients do NOT receive defaultDefaultClientScopes at import
+    either — that list only applies to clients created AFTER import. The realm
+    defines a minimal `roles` scope and lists it there so companion apps that
+    self-register clients via the admin API (e.g. nictiz-ui's register Job)
+    still get realm_access.roles; the imported clients rely on their
+    per-client mappers.
+  - Client `description` fields cap at 255 chars (DB column); longer values
+    abort the whole import.
+  - --import-realm only imports realms that DO NOT exist yet; changing the
+    realm JSON on a live install needs the realm deleted (kcadm delete
+    realms/freshehr + pod restart — sessions drop, client secrets are stable
+    since they're the same generated values) or the equivalent scope/mapper
+    additions applied via kcadm/admin REST. See the chart README runbook.
+*/ -}}
+{{- $v := .Values.secrets.values -}}
+{{- $realm := .Files.Get "config/realm-freshehr.json.tpl"
+     | replace "__KC_API_CLIENT_SECRET__" (required "secrets.values.keycloak.API_CLIENT_SECRET is required" $v.keycloak.API_CLIENT_SECRET)
+     | replace "__KC_HAPI_SVC_SECRET__" (required "secrets.values.keycloak.HAPI_SVC_SECRET is required" $v.keycloak.HAPI_SVC_SECRET)
+     | replace "__OAUTH2_PROXY_CLIENT_SECRET__" (required "secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET is required" $v.keycloak.OAUTH2_PROXY_CLIENT_SECRET)
+     | replace "__DOMAIN__" .Values.ingress.host -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-realm
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "keycloak") | nindent 4 }}
+type: Opaque
+stringData:
+  realm-freshehr.json: |-
+{{ $realm | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "keycloak") | nindent 4 }}
+spec:
+  replicas: {{ .Values.keycloak.replicas }}
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "keycloak") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "keycloak") | nindent 8 }}
+      annotations:
+        # Roll the pod when the realm import changes (realm content, client
+        # secrets or domain) — mirrors configChecksum for the config files.
+        checksum/realm: {{ $realm | sha256sum }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      initContainers:
+        {{- include "health-stack.waitForPostgres" (dict "ctx" . "host" "postgres" "user" "KC_DB_USERNAME" "userFromEnv" true "secretName" .Values.secretNames.keycloak) | nindent 8 }}
+      containers:
+        - name: keycloak
+          image: {{ include "health-stack.image" (dict "image" .Values.keycloak.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.keycloak.image) }}
+          # Production mode (NOT start-dev, unlike compose): TLS terminates at
+          # the ingress, so plain HTTP stays enabled and proxy headers are
+          # trusted instead.
+          args: ["start", "--import-realm"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://postgres:5432/keycloak
+            # Single canonical issuer strategy: serve under /auth and pin the
+            # hostname to the PUBLIC URL, so `iss` is identical for external
+            # callers, oauth2-proxy and EHRbase (backchannel-dynamic stays off).
+            # In-cluster token fetches against http://keycloak:8080/auth/...
+            # still work — Keycloak answers under any Host header.
+            - name: KC_HTTP_RELATIVE_PATH
+              value: /auth
+            - name: KC_HOSTNAME
+              value: {{ printf "https://%s/auth" .Values.ingress.host | quote }}
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_HTTP_MANAGEMENT_RELATIVE_PATH
+              value: /auth
+          envFrom:
+            # KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD + KC_DB_USERNAME/PASSWORD.
+            - secretRef:
+                name: {{ .Values.secretNames.keycloak }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.keycloak.readiness.path }}
+              port: management
+            initialDelaySeconds: {{ .Values.keycloak.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.keycloak.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.keycloak.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.keycloak.liveness.path }}
+              port: management
+            initialDelaySeconds: {{ .Values.keycloak.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.keycloak.liveness.periodSeconds }}
+          {{- with .Values.keycloak.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: realm
+          secret:
+            secretName: keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "keycloak") | nindent 4 }}
+spec:
+  type: {{ .Values.keycloak.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "keycloak") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.service.port }}
+      targetPort: 8080
+    - name: management
+      port: {{ .Values.keycloak.service.managementPort }}
+      targetPort: 9000
+{{- end }}
