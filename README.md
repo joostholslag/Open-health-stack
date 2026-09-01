@@ -10,8 +10,9 @@ independently-runnable infrastructure-as-code layers**:
 | 2 · Kubernetes | [`charts/health-stack/`](charts/health-stack/) | A **Helm chart** (6 workloads + ingress) with values files for `hetzner` (prod) and `dev` (kind)                     |
 | 3 · Cloud      | [`terraform/envs/hetzner/`](terraform/)        | Terraform provisions a **Hetzner k3s** cluster, installs ingress-nginx/cert-manager/CSI, then deploys the Helm chart |
 
-> **Distributable.** The app is one Helm chart, published as an OCI artifact to GHCR,
-> so it installs without cloning the repo. The chart never branches on the cloud
+> **Distributable.** The app is one Helm chart, installed from the local path
+> (`charts/health-stack/`); publishing it to an OCI registry (e.g. GHCR) is a
+> straightforward future step. The chart never branches on the cloud
 > provider — the only provider-specific value is `storage.className` — so adding a
 > cloud means one new values file plus a Terraform root for that cloud's cluster.
 > Only Hetzner ships today (see [Milestones](#milestones)).
@@ -708,7 +709,7 @@ checked, but never executed. Don't promote a row without doing the thing.
 | **M4** | Helm chart on local k8s (kind)                   | 🟡 **authored** — `helm lint` + `helm template` pass (20 objects for `values-dev`); **never installed on a cluster** (no kind/minikube available)                                                 |
 | **M5** | Terraform + Hetzner (k3s, ingress, TLS)          | ✅ **verified** (2026-08-31) — applied on a live hcloud cluster (3 nodes + LB, DNS + Let's Encrypt TLS); in-place `helm upgrade`s via `terraform apply` exercised |
 | **M6** | Keycloak / auth                                  | ✅ **verified** (2026-08-31) — Keycloak + oauth2-proxy with OAuth2 on all three data routes, on BOTH layers: compose (see [Auth (local)](#auth-local)) and the live Hetzner cluster (token matrix: bare/garbage rejected, Bearer 200 on `/fhir`, `/ehrbase`, `/openfhir`). openFHIR now validates **app-level** (`openfhir.protected`, per-API scopes + `tenant` claim) instead of the edge gate — verified on compose; a live Hetzner cluster needs the realm update + `$bootstrap` re-home (chart README runbook). Still machine-clients only — no human users/audit trail yet |
-| **M7** | OCI-published chart                              | 🟡 **authored** — [`helm-publish.yml`](.github/workflows/helm-publish.yml) pushes to GHCR on `v*` tags; never released                                                                            |
+| **M7** | OCI-published chart                              | ⚪ **dropped** — a `helm-publish.yml` workflow (GHCR on `v*` tags) was authored, then removed; the chart installs from the local path (see [Layer 2](#layer-2--kubernetes-helm-chart))                    |
 
 > **Multi-cloud (AWS EKS / Azure AKS) was removed on 2026-08-08.** It had been fully
 > authored but never applied, and there are no live deals on those clouds. The chart is
@@ -761,7 +762,7 @@ is invisible to API callers).
 ```
 freshehr-open-health-stack/
 ├── README.md · Makefile · .env.example · .gitignore
-├── .github/workflows/          # build-images (HAPI) + helm-publish (chart → GHCR OCI)
+├── .github/workflows/          # build-images (HAPI) + helm-lint (currently disabled)
 ├── docker/                     # Layer 1 — compose, Dockerfile, configs, init SQL, nginx, keycloak realm
 ├── charts/health-stack/        # Layer 2 — Helm chart + values (hetzner/dev)
 └── terraform/

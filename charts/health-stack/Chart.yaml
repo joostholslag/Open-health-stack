@@ -7,8 +7,7 @@ description: >-
   for Hetzner k3s (prod) and kind/minikube (dev).
 type: application
 
-# Chart version — bump on EVERY chart change (SemVer). CI pins this to the
-# release tag when publishing to GHCR (see .github/workflows/helm-publish.yml).
+# Chart version — bump on EVERY chart change (SemVer).
 # ⚠ The bump is not cosmetic: Terraform's helm provider only re-renders the
 # release when an input changes, and for a local chart path that input is THIS
 # version — template/config edits without a bump make `terraform apply` report
