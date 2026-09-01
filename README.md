@@ -15,7 +15,7 @@ independently-runnable infrastructure-as-code layers**:
 > straightforward future step. The chart never branches on the cloud
 > provider — the only provider-specific value is `storage.className` — so adding a
 > cloud means one new values file plus a Terraform root for that cloud's cluster.
-> Only Hetzner ships today (see [Milestones](#milestones)).
+> Only Hetzner ships today (see [Verification status](#verification-status)).
 
 It reproduces the end-state of the Dublin openFHIR hackathon, but with **HAPI FHIR instead of Firely**: the [
 `openfhir-hapi-interceptor`](https://github.com/openFHIR/openfhir-hapi-interceptor)
@@ -193,11 +193,6 @@ docker compose ps                # wait for all to be healthy
 # under a different internal tenant and is invisible to API callers):
 #   make bootstrap
 ```
-
-> **⚠ Upgrading an existing checkout to the Keycloak-enabled stack** needs one
-> local volume wipe: `docker compose down -v` (postgres init scripts, which now
-> also create the `keycloak` database, only run on first boot), then
-> `docker compose up -d` and re-run `make template` and `make bootstrap`.
 
 #### Auth (local)
 
@@ -545,9 +540,9 @@ curl -sS -o /dev/null -w 'ehrbase  no-auth %{http_code} (expect 401)\n' https://
 > Service: HAPI→EHRbase (cdrs.yml) and HAPI→openFHIR (`openfhir.oauth2.*` with
 > `scope=openfhir.map` in the hapi-config Secret's application.yml).
 >
-> **`/actuator/health` has no ingress route** — it never did; the old table listed it
-> as a public endpoint, but only `/fhir`, `/ehrbase` and `/openfhir` are routed. Check
-> it in-cluster: `kubectl exec -n health-stack deploy/hapi -- curl -s localhost:8080/actuator/health`.
+> **`/actuator/health` has no ingress route** — only `/fhir`, `/ehrbase` and
+> `/openfhir` are routed. Check it in-cluster:
+> `kubectl exec -n health-stack deploy/hapi -- curl -s localhost:8080/actuator/health`.
 >
 > **Postgres is deliberately not exposed** — it has no ingress route and is reachable
 > only in-cluster at `postgres:5432`. Check it via `kubectl get pods` or
@@ -638,7 +633,7 @@ high availability**:
 that attaches to exactly one node. And there is one control-plane, so losing it stops all scheduling regardless of how
 many agents exist.
 
-> **Preferred shape for a test environment (not yet applied).** Consolidate onto a
+> **Preferred shape for a test environment.** Consolidate onto a
 > **single, larger node** rather than three small ones:
 >
 > ```hcl
@@ -659,12 +654,9 @@ many agents exist.
 >
 > Nothing is lost: there is no HA today either way (see above). Note `cx33` is a
 > *downsize* in total capacity (4 vCPU/8 GB vs 10 vCPU/20 GB across three nodes) — ample
-> for 5 pods, but size up if the JVMs get OOM-killed.
->
-> **Not applied yet** because the running stack is verified end-to-end and reshaping
-> costs a `terraform destroy`, a new LB IP, a DNS update and full re-verification. Do it
-> at the next teardown, when it's free. Revert to multiple nodes at step 2 below —
-> replicas + anti-affinity is the point where extra nodes start doing real work.
+> for 5 pods, but size up if the JVMs get OOM-killed. Revert to multiple nodes at
+> step 2 below — replicas + anti-affinity is the point where extra nodes start doing
+> real work.
 
 **Scaling path, in the order that actually buys something:**
 
@@ -696,66 +688,23 @@ To add another cloud: write a `<cloud>-cluster` module that writes a kubeconfig 
 `terraform/envs/<cloud>`, and add a values file setting `storage.className`. The chart and `k8s-apps`' add-on half are
 already provider-neutral.
 
-## Milestones
+## Verification status
 
-Status vocabulary is deliberate: **verified** = actually run and observed; **authored** = written and statically
-checked, but never executed. Don't promote a row without doing the thing.
+Two kinds of claims appear in this README: **verified** = actually run and observed;
+**authored** = written and statically checked, but never executed.
 
-| #      | Milestone                                        | Status                                                                                                                                                                                            |
-|--------|--------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **M1** | Compose, openEHR→FHIR stack end-to-end           | ✅ **verified** (2026-08-08) — patient-summary bundle POSTed to `/fhir` → `201`, composition stored in EHRbase (see below). *Verified against the IPS set; the shipped set is now EPS.*          |
-| **M2** | openFHIR engine + bootstrap + license            | ✅ **verified** (2026-08-08) — engine on Postgres, mappings bootstrapped                                                                                                                          |
-| **M3** | CI builds/pushes the custom HAPI image, pin tags | 🟡 **authored** — workflow in [`.github/workflows/`](.github/workflows/); never run in CI                                                                                                         |
-| **M4** | Helm chart on local k8s (kind)                   | 🟡 **authored** — `helm lint` + `helm template` pass (20 objects for `values-dev`); **never installed on a cluster** (no kind/minikube available)                                                 |
-| **M5** | Terraform + Hetzner (k3s, ingress, TLS)          | ✅ **verified** (2026-08-31) — applied on a live hcloud cluster (3 nodes + LB, DNS + Let's Encrypt TLS); in-place `helm upgrade`s via `terraform apply` exercised |
-| **M6** | Keycloak / auth                                  | ✅ **verified** (2026-08-31) — Keycloak + oauth2-proxy with OAuth2 on all three data routes, on BOTH layers: compose (see [Auth (local)](#auth-local)) and the live Hetzner cluster (token matrix: bare/garbage rejected, Bearer 200 on `/fhir`, `/ehrbase`, `/openfhir`). openFHIR now validates **app-level** (`openfhir.protected`, per-API scopes + `tenant` claim) instead of the edge gate — verified on compose; a live Hetzner cluster needs the realm update + `$bootstrap` re-home (chart README runbook). Still machine-clients only — no human users/audit trail yet |
-| **M7** | OCI-published chart                              | ⚪ **dropped** — a `helm-publish.yml` workflow (GHCR on `v*` tags) was authored, then removed; the chart installs from the local path (see [Layer 2](#layer-2--kubernetes-helm-chart))                    |
-
-> **Multi-cloud (AWS EKS / Azure AKS) was removed on 2026-08-08.** It had been fully
-> authored but never applied, and there are no live deals on those clouds. The chart is
-> provider-neutral, so re-adding one is a values file plus a Terraform root — see
-> Layer 3.
-
-> **Identity status.** All three layers now carry the same OAuth2 architecture:
-> Keycloak (realm `freshehr`, client-credentials service accounts, realm roles
-> `USER`/`ADMIN`) + oauth2-proxy edge validation on `/fhir` + `/openfhir`, with
-> EHRbase validating natively. The **compose stack** is verified end-to-end (see
-> [Auth (local)](#auth-local)); the **Helm chart + Terraform** port (Keycloak and
-> oauth2-proxy Deployments, `/auth` + `/oauth2` Ingress, ingress `auth-url`
-> replacing the old basic auth, generated `random_password` client secrets) is
-> applied and verified on the live Hetzner cluster.
->
-> Both layers are **verified** (2026-08-31): the compose stack end-to-end
-> locally, and the Helm/Terraform port applied in-place on the live Hetzner
-> cluster (Keycloak DB created manually on the existing Postgres — init scripts
-> don't rerun; see `charts/health-stack/config/init-db.sql.tpl`).
->
-> Human login exists at the application layer: the companion
-> [freshehr-nictiz-ui](https://github.com/freshehr/freshehr-nictiz-ui) EMR gates its
-> host with its own session-mode oauth2-proxy and registers its clients + a
-> demo user against this realm at install time (admin-API Job — which also
-> sidesteps `--import-realm`'s no-update-on-existing-realm limitation). Still
-> short of an identity *system*: one demo account, no per-user RBAC beyond the
-> `USER`/`ADMIN` realm roles, no audit trail.
-
-### Proving M1/M2 yourself
-
-```bash
-make build                      # JAR must be in docker/hapi/extra-classes/ first
-make certs
-docker compose -f docker/docker-compose.yml up -d
-make template                   # one-time per fresh CDR: upload every OPT in the bootstrap dir to EHRbase
-make bootstrap                  # one-time per fresh CDR: load openFHIR mappings + ConceptMaps (tenant freshehr)
-make smoke                      # auth matrix: 401 bare / 200 with token per route
-# then POST an EPS bundle with a Bearer token (TOKEN=$(make token)) to
-# https://localhost/fhir → expect 201  (or unauthenticated to the
-# http://localhost:8080 dev-bypass port — see Auth (local))
-```
-
-`make template` and `make bootstrap` are **required** before the first POST: `make template` loads the OPT into
-EHRbase (or writes fail `422 Could not retrieve template for template Id: EPS Patient Summary`), and `make bootstrap`
-loads openFHIR's mappings + ConceptMaps under the `freshehr` tenant (in protected mode the engine's startup bootstrap
-is invisible to API callers).
+- **Verified:** the compose stack end-to-end (EPS bundle POSTed to `/fhir` → `201`,
+  composition queryable in EHRbase via AQL — `make smoke` runs the auth matrix), the
+  full OAuth2 architecture on both layers, and the Terraform deployment on a live
+  Hetzner k3s cluster (3 nodes + LB, DNS + Let's Encrypt TLS, in-place
+  `helm upgrade`s via `terraform apply`).
+- **Authored only:** the CI image-build workflow (never run in CI; currently
+  disabled) and the Helm chart on kind/minikube (`helm lint` + `helm template`
+  pass; never installed on a local cluster).
+- **Identity scope:** machine clients only at the stack level. Human login lives in
+  the companion [freshehr-nictiz-ui](https://github.com/freshehr/freshehr-nictiz-ui)
+  EMR, which registers its own clients and a demo user against the realm at install
+  time. No per-user RBAC beyond the `USER`/`ADMIN` realm roles and no audit trail yet.
 
 ## Repository layout
 
