@@ -1,8 +1,9 @@
 # health-stack Helm chart
 
 The **freshehr-open-health-stack** application layer as a Helm chart: HAPI FHIR
-(with the openFHIR interceptor), EHRbase, the openFHIR engine, and their Postgres
-backends.
+(with the openFHIR interceptor), EHRbase, the openFHIR engine, Keycloak (OIDC
+IdP, realm `freshehr`), oauth2-proxy (edge Bearer validator), and their shared
+Postgres backend.
 
 Runs on any Kubernetes cluster. Two values files ship with it — `values-hetzner.yaml`
 (prod) and `values-dev.yaml` (kind/minikube). The templates never branch on the cloud

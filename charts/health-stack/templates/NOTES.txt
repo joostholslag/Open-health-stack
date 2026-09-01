@@ -26,11 +26,19 @@
 
 {{- if .Values.ingress.enabled }}
 
-  Smoke test (point DNS '{{ .Values.ingress.host }}' at your ingress LB first):
-    curl {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}/fhir/metadata
+  Smoke test (point DNS '{{ .Values.ingress.host }}' at your ingress LB first;
+  data routes need a Bearer token from the freshehr realm — client_credentials
+  as api-client, see the repo README's "Credentials"):
+    curl {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}/openfhir/health          # 200, no token (permitAll)
+    curl -H "Authorization: Bearer $TOKEN" {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}/fhir/metadata
 {{- end }}
 
-  Routes: /fhir → HAPI · /ehrbase → EHRbase · /openfhir → openFHIR
+  Routes: /fhir → HAPI (edge OAuth via oauth2-proxy) · /ehrbase → EHRbase (native
+  OAuth2) · /openfhir → openFHIR (native OAuth2, per-API scopes) · /auth → Keycloak
 
-  One-time per fresh CDR: upload the IPS operational template to EHRbase, or
-  composition writes fail 422 "Could not retrieve template". See `make template`.
+  One-time per fresh CDR (both authenticated; see the repo README):
+    1. Upload the EPS operational template to EHRbase, or composition writes
+       fail 422 "Could not retrieve template".
+    2. POST /openfhir/$bootstrap + the *_conceptmap.json files with a Bearer
+       token — the engine's startup bootstrap writes under a different tenant
+       than API callers and is invisible to them in protected mode.

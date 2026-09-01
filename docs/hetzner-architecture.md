@@ -81,9 +81,11 @@ flowchart TB
 
     subgraph wl["Workloads"]
       hapi["<b>hapi</b> Deployment<br/>HAPI FHIR + interceptor JAR<br/>replicas: 2 <i>(values-hetzner)</i>"]
-      ehr["<b>ehrbase</b> Deployment<br/>openEHR CDR<br/>replicas: 1"]
-      of["<b>openfhir</b> Deployment<br/>engine + bootstrap initContainer<br/>replicas: 1"]
-      pg["<b>postgres</b> StatefulSet<br/>databases: ehrbase · hapi · openfhir<br/>replicas: 1 + PVC"]
+      ehr["<b>ehrbase</b> Deployment<br/>openEHR CDR (OAuth2 resource server)<br/>replicas: 1"]
+      of["<b>openfhir</b> Deployment<br/>engine, OAuth2 resource server (per-API scopes)<br/>+ bootstrap initContainer · replicas: 1"]
+      kc["<b>keycloak</b> Deployment<br/>OIDC IdP, realm freshehr (--import-realm)<br/>replicas: 1"]
+      o2p["<b>oauth2-proxy</b> Deployment<br/>edge Bearer validator (auth-url on /fhir)<br/>replicas: 1"]
+      pg["<b>postgres</b> StatefulSet<br/>databases: ehrbase · hapi · openfhir · keycloak<br/>replicas: 1 + PVC"]
     end
 
     subgraph sys["Cluster add-ons (other namespaces)"]
@@ -93,10 +95,13 @@ flowchart TB
     end
   end
 
-  ing --> hapi & ehr & of
-  hapi --> of
+  ing --> hapi & ehr & of & kc
+  ing -.->|auth-url /fhir| o2p
+  o2p -.->|validate JWT| kc
+  hapi -->|Bearer hapi-svc| of
+  hapi -->|Bearer hapi-svc| ehr
   of --> ehr
-  hapi & ehr & of --> pg
+  hapi & ehr & of & kc --> pg
   ngx --> ing
 
   style pg fill:#4a2a4a,stroke:#a96aa9,color:#fff
@@ -104,9 +109,10 @@ flowchart TB
   style sys fill:#3d3d2a,stroke:#b0b04a,color:#fff
 ```
 
-**5 app pods + 1 database pod** on Hetzner (hapi runs 2 replicas there; the chart
-default is 1). The add-ons (ingress-nginx, cert-manager, CCM, CSI) add a handful more
-in `ingress-nginx`, `cert-manager` and `hcloud-system` namespaces.
+**6 app pods + 1 database pod** on Hetzner (hapi runs 2 replicas there; the chart
+default is 1; keycloak and oauth2-proxy add one each). The add-ons (ingress-nginx,
+cert-manager, CCM, CSI) add a handful more in `ingress-nginx`, `cert-manager` and
+`hcloud-system` namespaces.
 
 **One Postgres, four databases.** All services share the single `postgres`
 StatefulSet — `jdbc:postgresql://postgres:5432/{ehrbase,hapi,openfhir,keycloak}`.

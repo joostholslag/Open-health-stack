@@ -1,104 +1,108 @@
-# M3 — build & push the custom container images to Docker Hub (openfhir org).
+# DISABLED before repository transfer: this workflow references the previous
+# publisher's registry org and repo secrets and would fail in a new org.
+# Re-enable by uncommenting and updating IMAGE_ORG / secrets / hostnames.
 #
-#   * openfhir/hapi-openfhir             = official HAPI + the openFHIR interceptor
-#                                          JAR (interceptor built from source here)
-#   * openfhir/fhirconnect-eps-mappings  = data-only image: the EPS FHIRConnect
-#                                          mappings + OPT, copied into the openFHIR
-#                                          pod by an initContainer
+# # M3 — build & push the custom container images to Docker Hub (openfhir org).
+# #
+# #   * openfhir/hapi-openfhir             = official HAPI + the openFHIR interceptor
+# #                                          JAR (interceptor built from source here)
+# #   * openfhir/fhirconnect-eps-mappings  = data-only image: the EPS FHIRConnect
+# #                                          mappings + OPT, copied into the openFHIR
+# #                                          pod by an initContainer
+# #
+# # The Helm chart references both via `images.hapi` / `images.ipsMappings`. That
+# # values key keeps its historical `ips` spelling — renaming it would break existing
+# # overrides, and it names a chart field, not the registry repository.
+# #
+# # Requires two repo secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access token
+# # from hub.docker.com → Account Settings → Personal access tokens, with Read/Write).
+# name: build-images
 #
-# The Helm chart references both via `images.hapi` / `images.ipsMappings`. That
-# values key keeps its historical `ips` spelling — renaming it would break existing
-# overrides, and it names a chart field, not the registry repository.
+# on:
+#   push:
+#     branches: [main]
+#     tags: ["v*"]
+#     paths:
+#       - "docker/hapi/**"
+#       - "docker/openfhir/bootstrap/**"
+#       - "docker/openfhir/bootstrap.Dockerfile"
+#       - ".github/workflows/build-images.yml"
+#   workflow_dispatch:
 #
-# Requires two repo secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access token
-# from hub.docker.com → Account Settings → Personal access tokens, with Read/Write).
-name: build-images
-
-on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-    paths:
-      - "docker/hapi/**"
-      - "docker/openfhir/bootstrap/**"
-      - "docker/openfhir/bootstrap.Dockerfile"
-      - ".github/workflows/build-images.yml"
-  workflow_dispatch:
-
-env:
-  REGISTRY: docker.io
-  IMAGE_ORG: openfhir
-  # Pin the interceptor source revision for reproducible builds.
-  INTERCEPTOR_REPO: https://github.com/openFHIR/openfhir-hapi-interceptor
-  INTERCEPTOR_REF: main
-
-jobs:
-  hapi:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      # Build the interceptor JAR from source and stage it where the HAPI
-      # Dockerfile expects it (docker/hapi/extra-classes/).
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - name: Build interceptor JAR
-        run: |
-          git clone --depth 1 --branch "$INTERCEPTOR_REF" "$INTERCEPTOR_REPO" /tmp/interceptor
-          cd /tmp/interceptor
-          mvn -B clean package -DskipTests
-          mkdir -p "$GITHUB_WORKSPACE/docker/hapi/extra-classes"
-          cp target/*.jar "$GITHUB_WORKSPACE/docker/hapi/extra-classes/"
-
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_ORG }}/hapi-openfhir
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=sha
-      - uses: docker/build-push-action@v6
-        with:
-          context: docker/hapi
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  eps-mappings:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_ORG }}/fhirconnect-eps-mappings
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=sha
-      - uses: docker/build-push-action@v6
-        with:
-          context: docker/openfhir
-          file: docker/openfhir/bootstrap.Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+# env:
+#   REGISTRY: docker.io
+#   IMAGE_ORG: openfhir
+#   # Pin the interceptor source revision for reproducible builds.
+#   INTERCEPTOR_REPO: https://github.com/openFHIR/openfhir-hapi-interceptor
+#   INTERCEPTOR_REF: main
+#
+# jobs:
+#   hapi:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: read
+#     steps:
+#       - uses: actions/checkout@v4
+#
+#       # Build the interceptor JAR from source and stage it where the HAPI
+#       # Dockerfile expects it (docker/hapi/extra-classes/).
+#       - uses: actions/setup-java@v4
+#         with:
+#           distribution: temurin
+#           java-version: "17"
+#       - name: Build interceptor JAR
+#         run: |
+#           git clone --depth 1 --branch "$INTERCEPTOR_REF" "$INTERCEPTOR_REPO" /tmp/interceptor
+#           cd /tmp/interceptor
+#           mvn -B clean package -DskipTests
+#           mkdir -p "$GITHUB_WORKSPACE/docker/hapi/extra-classes"
+#           cp target/*.jar "$GITHUB_WORKSPACE/docker/hapi/extra-classes/"
+#
+#       - uses: docker/setup-buildx-action@v3
+#       - uses: docker/login-action@v3
+#         with:
+#           registry: ${{ env.REGISTRY }}
+#           username: ${{ secrets.DOCKERHUB_USERNAME }}
+#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+#       - id: meta
+#         uses: docker/metadata-action@v5
+#         with:
+#           images: ${{ env.IMAGE_ORG }}/hapi-openfhir
+#           tags: |
+#             type=ref,event=branch
+#             type=semver,pattern={{version}}
+#             type=sha
+#       - uses: docker/build-push-action@v6
+#         with:
+#           context: docker/hapi
+#           push: true
+#           tags: ${{ steps.meta.outputs.tags }}
+#           labels: ${{ steps.meta.outputs.labels }}
+#
+#   eps-mappings:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: read
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: docker/setup-buildx-action@v3
+#       - uses: docker/login-action@v3
+#         with:
+#           registry: ${{ env.REGISTRY }}
+#           username: ${{ secrets.DOCKERHUB_USERNAME }}
+#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+#       - id: meta
+#         uses: docker/metadata-action@v5
+#         with:
+#           images: ${{ env.IMAGE_ORG }}/fhirconnect-eps-mappings
+#           tags: |
+#             type=ref,event=branch
+#             type=semver,pattern={{version}}
+#             type=sha
+#       - uses: docker/build-push-action@v6
+#         with:
+#           context: docker/openfhir
+#           file: docker/openfhir/bootstrap.Dockerfile
+#           push: true
+#           tags: ${{ steps.meta.outputs.tags }}
+#           labels: ${{ steps.meta.outputs.labels }}

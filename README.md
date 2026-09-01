@@ -1,12 +1,13 @@
 # freshehr-open-health-stack
 
 A dockerized **openEHR → FHIR** health-data stack — HAPI FHIR (with the openFHIR interceptor), EHRbase, the openFHIR
-engine, and nginx — shipped as **three independently-runnable infrastructure-as-code layers**:
+engine, Keycloak (OIDC IdP) with oauth2-proxy (edge token validator), and nginx — shipped as **three
+independently-runnable infrastructure-as-code layers**:
 
 | Layer          | Path                                           | What it stands up                                                                                                    |
 |----------------|------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
 | 1 · Local dev  | [`docker/`](docker/)                           | `docker compose` — all services + 1 Postgres + nginx on your laptop                                                  |
-| 2 · Kubernetes | [`charts/health-stack/`](charts/health-stack/) | A **Helm chart** (4 workloads + ingress) with values files for `hetzner` (prod) and `dev` (kind)                     |
+| 2 · Kubernetes | [`charts/health-stack/`](charts/health-stack/) | A **Helm chart** (6 workloads + ingress) with values files for `hetzner` (prod) and `dev` (kind)                     |
 | 3 · Cloud      | [`terraform/envs/hetzner/`](terraform/)        | Terraform provisions a **Hetzner k3s** cluster, installs ingress-nginx/cert-manager/CSI, then deploys the Helm chart |
 
 > **Distributable.** The app is one Helm chart, published as an OCI artifact to GHCR,
@@ -33,40 +34,50 @@ flowchart LR
     client([Client])
     subgraph edge[Edge]
         nginx[nginx / ingress-nginx]
+        o2p[oauth2-proxy]
     end
     subgraph fhir[FHIR facade]
         hapi[HAPI FHIR<br/>+ openFHIR interceptor]
     end
-    openfhir[openFHIR engine]
-    ehrbase[EHRbase CDR]
-    pg[(Postgres<br/>ehrbase · hapi · openfhir)]
+    kc[Keycloak<br/>realm freshehr]
+    openfhir[openFHIR engine<br/>OAuth2 resource server<br/>per-API scopes]
+    ehrbase[EHRbase CDR<br/>OAuth2 resource server]
+    pg[(Postgres<br/>ehrbase · hapi · openfhir · keycloak)]
 
-client -->|/fhir /ehrbase /openfhir|nginx
-nginx --> hapi
-nginx --> ehrbase
-nginx --> openfhir
-hapi -->|EPS create/query|openfhir
+client -->|/fhir /ehrbase /openfhir /auth|nginx
+nginx -->|"/fhir (edge auth)"|hapi
+nginx -.->|auth_request|o2p
+o2p -.->|validate JWT|kc
+nginx -->|"/ehrbase (native auth)"|ehrbase
+nginx -->|"/openfhir (native auth)"|openfhir
+nginx -->|/auth|kc
+hapi -->|"EPS create/query<br/>Bearer hapi-svc, scope openfhir.map"|openfhir
+hapi -->|"openEHR REST<br/>Bearer hapi-svc"|ehrbase
 openfhir -->|openEHR REST|ehrbase
 hapi --- pg
 ehrbase --- pg
 openfhir --- pg
+kc --- pg
 ```
 
 **Routing table** (nginx in compose; ingress-nginx via the Helm chart in k8s):
-`/fhir`→HAPI, `/ehrbase`→EHRbase, `/openfhir`→openFHIR engine.
+`/fhir`→HAPI (edge-gated by oauth2-proxy), `/ehrbase`→EHRbase and
+`/openfhir`→openFHIR engine (both validate Bearer tokens natively as OAuth2
+resource servers), `/auth`→Keycloak (public token/discovery endpoints). Every
+route accepts the same `freshehr`-realm tokens — see [Auth (local)](#auth-local).
 
 **DB topology:** **one** Postgres instance with a database each for `ehrbase`,
 `hapi` and `openfhir` — see [Database topology](#database-topology) for why, and what production should do differently.
 
 ## Database topology
 
-All three services share **one Postgres instance**, each with its own database (`ehrbase`, `hapi`, `openfhir`) and owner
-role. The databases are created by
+All four services share **one Postgres instance**, each with its own database (`ehrbase`, `hapi`, `openfhir`,
+`keycloak`) and owner role. The databases are created by
 [`docker/ehrbase/init-db.sql`](docker/ehrbase/init-db.sql), which runs after the image's own EHRbase bootstrap.
 
 The instance stays on the **`ehrbase/ehrbase-v2-postgres`** image: EHRbase needs the extensions and role layout that
-image pre-provisions, while HAPI and openFHIR are schema-agnostic and just need an empty database to build into (HAPI
-creates its JPA tables, openFHIR runs its own Flyway migrations).
+image pre-provisions, while HAPI, openFHIR and Keycloak are schema-agnostic and just need an empty database to build
+into (HAPI creates its JPA tables, openFHIR runs its Flyway migrations, Keycloak its Liquibase changelog).
 
 > **This is a deliberate non-production choice.** One instance is simpler and cheaper
 > to run, and for a reference/integration stack the isolation isn't worth the extra
@@ -136,9 +147,12 @@ depends on an external service at runtime.
 - **Image must be `openfhir-enterprise`.** The Postgres repository implementation ships only there; the community
   `openfhir` image is Mongo-only and fails with
   `No qualifying bean of type FhirConnectModelRepository` under a Postgres config.
-- **No OAuth.** The interceptor only attempts a token request when the token URL, client id *and* secret are all
-  non-blank. The in-cluster engine is unauthenticated, so those are left unset — populating them (even with
-  placeholders) breaks every store with `Token request failed … invalid_client`.
+- **OAuth2 resource server.** The engine runs protected (`openfhir.protected=true`) against the `freshehr` realm, with
+  fine-grained per-API scopes and a `tenant`-claim-keyed data store — see [Auth (local)](#auth-local). The HAPI
+  interceptor authenticates the HAPI→openFHIR hop via the `openfhir.oauth2.*` block (`hapi-svc`,
+  `scope=openfhir.map`). ⚠ That block is **all-or-none**: the interceptor only attempts a token request when the
+  token URL, client id *and* secret are all non-blank; a partial block breaks every store with
+  `Token request failed … invalid_client`.
 
 ## Prerequisites & blockers
 
@@ -220,9 +234,10 @@ realm template — only the secrets differ):
 | `oauth2-proxy` | standard flow | The stack's edge Bearer validator (also the audience every service token carries) |
 
 These are the stack's *infrastructure* clients. Applications deployed
-alongside (e.g. the nictiz-ui EMR) register their own clients and users
-against the realm via the admin API at their own install time — this repo
-stays agnostic of them.
+alongside (e.g. the companion
+[freshehr-nictiz-ui](https://github.com/freshehr/freshehr-nictiz-ui) EMR)
+register their own clients and users against the realm via the admin API at
+their own install time — this repo stays agnostic of them.
 
 `make token` prints a `client_credentials` Bearer token (client `api-client`):
 
@@ -691,15 +706,14 @@ checked, but never executed. Don't promote a row without doing the thing.
 | **M2** | openFHIR engine + bootstrap + license            | ✅ **verified** (2026-08-08) — engine on Postgres, mappings bootstrapped                                                                                                                          |
 | **M3** | CI builds/pushes the custom HAPI image, pin tags | 🟡 **authored** — workflow in [`.github/workflows/`](.github/workflows/); never run in CI                                                                                                         |
 | **M4** | Helm chart on local k8s (kind)                   | 🟡 **authored** — `helm lint` + `helm template` pass (20 objects for `values-dev`); **never installed on a cluster** (no kind/minikube available)                                                 |
-| **M5** | Terraform + Hetzner (k3s, ingress, TLS)          | ✅ **verified** (2026-08-31) — applied on a live hcloud cluster (3 nodes + LB, DNS + Let's Encrypt TLS at health.example.com); in-place `helm upgrade`s via `terraform apply` exercised |
+| **M5** | Terraform + Hetzner (k3s, ingress, TLS)          | ✅ **verified** (2026-08-31) — applied on a live hcloud cluster (3 nodes + LB, DNS + Let's Encrypt TLS); in-place `helm upgrade`s via `terraform apply` exercised |
 | **M6** | Keycloak / auth                                  | ✅ **verified** (2026-08-31) — Keycloak + oauth2-proxy with OAuth2 on all three data routes, on BOTH layers: compose (see [Auth (local)](#auth-local)) and the live Hetzner cluster (token matrix: bare/garbage rejected, Bearer 200 on `/fhir`, `/ehrbase`, `/openfhir`). openFHIR now validates **app-level** (`openfhir.protected`, per-API scopes + `tenant` claim) instead of the edge gate — verified on compose; a live Hetzner cluster needs the realm update + `$bootstrap` re-home (chart README runbook). Still machine-clients only — no human users/audit trail yet |
 | **M7** | OCI-published chart                              | 🟡 **authored** — [`helm-publish.yml`](.github/workflows/helm-publish.yml) pushes to GHCR on `v*` tags; never released                                                                            |
 
 > **Multi-cloud (AWS EKS / Azure AKS) was removed on 2026-08-08.** It had been fully
 > authored but never applied, and there are no live deals on those clouds. The chart is
 > provider-neutral, so re-adding one is a values file plus a Terraform root — see
-> Layer 3. History: [
-`nimbalyst-local/plans/multi-cloud-distribution.md`](nimbalyst-local/plans/multi-cloud-distribution.md).
+> Layer 3.
 
 > **Identity status.** All three layers now carry the same OAuth2 architecture:
 > Keycloak (realm `freshehr`, client-credentials service accounts, realm roles
@@ -715,7 +729,8 @@ checked, but never executed. Don't promote a row without doing the thing.
 > cluster (Keycloak DB created manually on the existing Postgres — init scripts
 > don't rerun; see `charts/health-stack/config/init-db.sql.tpl`).
 >
-> Human login exists at the application layer: the nictiz-ui EMR gates its
+> Human login exists at the application layer: the companion
+> [freshehr-nictiz-ui](https://github.com/freshehr/freshehr-nictiz-ui) EMR gates its
 > host with its own session-mode oauth2-proxy and registers its clients + a
 > demo user against this realm at install time (admin-API Job — which also
 > sidesteps `--import-realm`'s no-update-on-existing-realm limitation). Still

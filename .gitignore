@@ -54,3 +54,7 @@ replay_pid*
 .vscode/
 .DS_Store
 *.swp
+
+# Local AI-assistant working files (never ship)
+nimbalyst-local/
+.nimbalyst/
