@@ -231,7 +231,7 @@ realm template — only the secrets differ):
 
 These are the stack's *infrastructure* clients. Applications deployed
 alongside (e.g. the companion
-[freshehr-nictiz-ui](https://github.com/freshehr/freshehr-nictiz-ui) EMR)
+[freshehr-nictiz-ui](https://github.com/freshehrteam/Nictiz-ui) EMR)
 register their own clients and users against the realm via the admin API at
 their own install time — this repo stays agnostic of them.
 
@@ -702,7 +702,7 @@ Two kinds of claims appear in this README: **verified** = actually run and obser
   disabled) and the Helm chart on kind/minikube (`helm lint` + `helm template`
   pass; never installed on a local cluster).
 - **Identity scope:** machine clients only at the stack level. Human login lives in
-  the companion [freshehr-nictiz-ui](https://github.com/freshehr/freshehr-nictiz-ui)
+  the companion [freshehr-nictiz-ui](https://github.com/freshehrteam/Nictiz-ui)
   EMR, which registers its own clients and a demo user against the realm at install
   time. No per-user RBAC beyond the `USER`/`ADMIN` realm roles and no audit trail yet.
 

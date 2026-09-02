@@ -25,8 +25,8 @@ keywords:
   - ehrbase
   - openfhir
   - health
-home: https://github.com/freshehr/freshehr-open-health-stack
+home: https://github.com/freshehrteam/Open-health-stack
 sources:
-  - https://github.com/freshehr/freshehr-open-health-stack
+  - https://github.com/freshehrteam/Open-health-stack
 maintainers:
   - name: freshEHR
