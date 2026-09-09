@@ -12,7 +12,10 @@
 # only needs the file dropped in /data plus a restart — no image change.
 set -eu
 DATA_DIR="${HADES_DATA_DIR:-/data}"
-PORT="${HADES_PORT:-8080}"
+# NB: not HADES_PORT. In Kubernetes the `hades` Service makes the kubelet inject
+# legacy service-link vars (HADES_PORT=tcp://<clusterIP>:8080, HADES_SERVICE_*),
+# which would clobber the flag with a non-numeric value and crash `serve`.
+PORT="${HADES_SERVE_PORT:-8080}"
 JAVA_OPTS="${JAVA_OPTS:--Xmx1g}"
 
 if ! ls "${DATA_DIR}"/*.db >/dev/null 2>&1; then
