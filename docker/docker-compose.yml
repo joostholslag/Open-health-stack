@@ -273,7 +273,7 @@ services:
     # FhirConnectModelRepository" under a postgres config.
     # Pinned (matches the Helm chart openfhir.image.tag); OPENFHIR_IMAGE still
     # overrides for local engine builds.
-    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:3.0.0}
+    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:3.0.1}
     container_name: freshehr-openfhir
     # Direct host port (8083:8080) lives in docker-compose.override.yml.
     environment:
@@ -317,7 +317,7 @@ services:
   hades:
     build:
       context: ./hades
-    image: ${HADES_IMAGE:-ghcr.io/freshehrteam/hades:latest}
+    image: ${HADES_IMAGE:-ghcr.io/freshehrteam/hades:0.4.2}
     container_name: freshehr-hades
     # No Postgres wiring on purpose: hades keeps its terminology in local *.db
     # files on the volume below (upstream hermes storage), not a SQL database.
@@ -339,7 +339,7 @@ services:
 
   # ── nginx reverse proxy + TLS ─────────────────────────────────────────────
   nginx:
-    image: nginx:1.30-alpine
+    image: nginx:1.31-alpine
     container_name: freshehr-nginx
     ports:
       - "80:80"
