@@ -11,8 +11,9 @@ every constraint in it has already broken this stack once.
 ## 1. Preflight
 
 - `git status` clean in BOTH repos (this one and `../freshehr-nictiz-ui`).
-- Gitignored prerequisites present: `docker/openfhir/license/openfhir-license.json`
-  and `docker/hapi/extra-classes/*.jar`.
+- Gitignored prerequisite present: `docker/openfhir/license/openfhir-license.json`.
+  (The openFHIR HAPI interceptor JAR is NOT a local prerequisite anymore — the
+  hapi Dockerfile fetches it from the pinned release asset at build time.)
 
 ## 2. Record "before"
 
@@ -25,6 +26,7 @@ Run `make versions` and save the table — it is the "before" half of the report
 | EHRbase | https://github.com/ehrbase/ehrbase/releases + `https://hub.docker.com/v2/repositories/ehrbase/ehrbase/tags/?page_size=25` |
 | ehrbase-v2-postgres | the tag the target EHRbase release documents (release notes / its docker-compose) — do NOT bump independently |
 | HAPI | `https://hub.docker.com/v2/repositories/hapiproject/hapi/tags/?page_size=25` |
+| openFHIR interceptor | `https://api.github.com/repos/openFHIR/openfhir-hapi-interceptor/releases` — pick the newest release that ships an `openfhir-hapi-interceptor-<ver>.jar` **asset** (check each release's `assets[]`; releases ≥ 2.0.0 do, older tags publish none). Confirm its `hapi.fhir.version` in the tag's `pom.xml` is compatible with the HAPI base you're pinning. |
 | Keycloak | `https://quay.io/api/v1/repository/keycloak/keycloak/tag/?limit=25` + https://github.com/keycloak/keycloak/releases |
 | oauth2-proxy | https://github.com/oauth2-proxy/oauth2-proxy/releases |
 | openFHIR | `https://hub.docker.com/v2/repositories/openfhir/openfhir-enterprise/tags/?page_size=25` — enterprise ONLY; if the vendor publishes only `latest`, pin by digest and note it |
@@ -43,8 +45,21 @@ Run `make versions` and save the table — it is the "before" half of the report
   `charts/health-stack/config/realm-freshehr.json.tpl`).
 - **oauth2-proxy**: flag renames/removals (check the CHANGELOG for the
   `OAUTH2_PROXY_*` vars used in compose + chart).
-- **HAPI**: major version bump ⇒ the interceptor JAR must be recompiled
-  against the new base (openfhir-hapi-interceptor repo) before `make build`.
+- **HAPI + openFHIR interceptor** (two coupled pins, both in
+  `docker/hapi/Dockerfile`):
+  - The interceptor is compiled against a specific HAPI FHIR **library** version
+    (its deps are `provided`-scope, resolved at runtime from the base image), so
+    `ARG INTERCEPTOR_VERSION` and `ARG HAPI_BASE` must stay compatible. Check the
+    interceptor tag's `pom.xml` `hapi.fhir.version` against the HAPI server image
+    tag's bundled library (server image `vX.Y.0-*` bundles HAPI FHIR `X.Y.0`).
+    Prefer a HAPI base whose library matches the interceptor's target exactly.
+  - The interceptor JAR is fetched at build time via `curl -f` from the GitHub
+    **release asset** — there is no local file and no mvn build. Only bump
+    `INTERCEPTOR_VERSION` to a tag that publishes a
+    `openfhir-hapi-interceptor-<ver>.jar` asset; a tag without one FAILS the
+    build by design (that is the intended signal — do not fall back to building
+    from source). Upstream ships **no `.sha256`** asset, so there's no checksum
+    to pin (unlike hades).
 - **hades**: Java baseline still 21? CLI flag changes to `install`/`serve`
   (used by `docker/hades/entrypoint.sh` and `make hades-snomed`)? On bump,
   update `ARG HADES_VERSION` **and** `ARG HADES_SHA256` in
@@ -57,7 +72,7 @@ Run `make versions` and save the table — it is the "before" half of the report
 
 - `docker/docker-compose.yml` (ehrbase, keycloak, oauth2-proxy, postgres,
   openfhir default, nginx)
-- `docker/hapi/Dockerfile` (`ARG HAPI_BASE`)
+- `docker/hapi/Dockerfile` (`ARG HAPI_BASE` + `ARG INTERCEPTOR_VERSION`)
 - `docker/hades/Dockerfile` (`ARG HADES_VERSION` + `ARG HADES_SHA256`, in lockstep)
 - `charts/health-stack/values.yaml` (same tags as compose)
 - **Bump `charts/health-stack/Chart.yaml` `version:`** (terraform no-ops otherwise)

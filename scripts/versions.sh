@@ -87,6 +87,10 @@ row hades         "freshehrteam/hades"           "ghcr.io/freshehrteam/hades"
 hapi_base=$(tr -d '\r' < "$HAPI_DOCKERFILE" | sed -n 's/^ARG HAPI_BASE=hapiproject\/hapi:\(.*\)$/\1/p')
 hapi_run=""; [ "$STACK_UP" = 1 ] && hapi_run=$(running_tag "ghcr.io/freshehrteam/hapi-openfhir")
 printf "$FMT" "hapi (base)"  "${hapi_base:-?}" "(local build)"        "${hapi_run:--}" "info"
+# openFHIR interceptor: fetched at build time from the pinned GitHub release
+# asset (Dockerfile ARG INTERCEPTOR_VERSION), not a committed file or image tag.
+hapi_icpt=$(tr -d '\r' < "$HAPI_DOCKERFILE" | sed -n 's/^ARG INTERCEPTOR_VERSION=\(.*\)$/\1/p')
+printf "$FMT" "hapi (icpt)"  "${hapi_icpt:-?}" "(Dockerfile ARG)"     "-" "info"
 printf "$FMT" "hapi (chart)" "-"               "$(chart_tag ghcr.io/freshehrteam/hapi-openfhir)" "-" "info"
 nginx_run=""; [ "$STACK_UP" = 1 ] && nginx_run=$(running_tag "nginx")
 printf "$FMT" "nginx"        "$(compose_tag nginx)" "(ingress-nginx)" "${nginx_run:--}" "info"

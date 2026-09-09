@@ -325,7 +325,7 @@ keycloak:
   replicas: 1
   image:
     repository: quay.io/keycloak/keycloak
-    tag: 26.7.2
+    tag: 26.7.3
     pullPolicy: IfNotPresent
   realm: freshehr
   resources: {}
@@ -355,7 +355,7 @@ oauth2Proxy:
   replicas: 1
   image:
     repository: quay.io/oauth2-proxy/oauth2-proxy
-    tag: v7.15.3
+    tag: v7.15.4
     pullPolicy: IfNotPresent
   resources: {}
   service:

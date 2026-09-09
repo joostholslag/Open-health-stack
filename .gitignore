@@ -11,7 +11,9 @@ secrets.yml
 docker/openfhir/license/*.json
 openfhir-license.json
 
-# ── HAPI interceptor JAR (build input, documented but not committed) ────
+# ── HAPI interceptor JAR (fetched into the image at build time, never here) ──
+# The Dockerfile downloads the pinned release asset directly; no local copy is
+# a build input. Kept ignored so a stray/manual jar can't be committed.
 docker/hapi/extra-classes/*.jar
 
 # ── TLS certs (self-signed dev certs, generated locally) ────────────────

@@ -127,7 +127,7 @@ services:
 
   # ── Keycloak (OIDC identity provider) ─────────────────────────────────────
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.2
+    image: quay.io/keycloak/keycloak:26.7.3
     container_name: freshehr-keycloak
     command: ["start-dev", "--import-realm"]
     ports:
@@ -205,7 +205,7 @@ services:
 
   # ── oauth2-proxy (edge Bearer-token validator for nginx auth_request) ─────
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4
     container_name: freshehr-oauth2-proxy
     environment:
       OAUTH2_PROXY_PROVIDER: keycloak-oidc
@@ -339,7 +339,7 @@ services:
 
   # ── nginx reverse proxy + TLS ─────────────────────────────────────────────
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30-alpine
     container_name: freshehr-nginx
     ports:
       - "80:80"

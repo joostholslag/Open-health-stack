@@ -42,7 +42,7 @@ certs: ## Generate self-signed dev TLS certs for the compose nginx
 	@echo "Wrote $(DOCKER_DIR)/nginx/certs/tls.{crt,key}"
 
 .PHONY: build
-build: ## Build the custom images: hapi (layers the interceptor JAR) + hades (fetches the upstream JAR)
+build: ## Build the custom images: hapi (fetches the interceptor JAR) + hades (fetches the upstream JAR)
 	$(COMPOSE) build hapi hades
 
 .PHONY: up
@@ -71,8 +71,8 @@ config: ## Validate + render the merged compose config
 
 .PHONY: images
 images: ## Build all three custom images (IMAGE_ORG/IMAGE_TAG override the defaults)
-	@# hapi-openfhir needs the interceptor JAR in docker/hapi/extra-classes/ first.
-	@test -n "$$(ls $(DOCKER_DIR)/hapi/extra-classes/*.jar 2>/dev/null)" || { echo "ERROR: no interceptor JAR in $(DOCKER_DIR)/hapi/extra-classes/ — see README blockers"; exit 1; }
+	@# hapi-openfhir fetches the interceptor JAR at build time from the pinned
+	@# GitHub release asset (Dockerfile ARG INTERCEPTOR_VERSION); nothing to stage.
 	docker build -t $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG) $(DOCKER_DIR)/hapi
 	docker build -f $(DOCKER_DIR)/openfhir/bootstrap.Dockerfile -t $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG) $(DOCKER_DIR)/openfhir
 	@# hades: the upstream JAR version is pinned by the Dockerfile's ARG

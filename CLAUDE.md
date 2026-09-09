@@ -21,9 +21,10 @@ one shared Postgres, nginx.
 
 - `docker/openfhir/license/openfhir-license.json` — vendor license
   (request at https://open-fhir.com#access).
-- `docker/hapi/extra-classes/*.jar` — the openFHIR HAPI interceptor JAR, built
-  from https://github.com/openFHIR/openfhir-hapi-interceptor
-  (`mvn clean package -DskipTests`).
+
+(The openFHIR HAPI interceptor JAR is no longer a prerequisite — it is fetched
+at build time from the pinned GitHub release asset; see the interceptor pin in
+the table below.)
 
 ## Image pins — every location
 
@@ -38,7 +39,8 @@ Compose and chart MUST declare the same tag for shared components;
 | postgres         | `docker/docker-compose.yml:239`    | `charts/health-stack/values.yaml:372`| must stay the ehrbase vendor image |
 | openfhir         | `docker/docker-compose.yml:276`    | `charts/health-stack/values.yaml:257`| must stay `openfhir-enterprise` |
 | nginx            | `docker/docker-compose.yml:342`    | — (k8s uses ingress-nginx)           | |
-| hapi (upstream)  | `docker/hapi/Dockerfile:22` (`ARG HAPI_BASE`) | —                         | the real HAPI pin; compose builds locally |
+| hapi (upstream)  | `docker/hapi/Dockerfile:25` (`ARG HAPI_BASE`) | —                         | the real HAPI pin; compose builds locally |
+| hapi (interceptor) | `docker/hapi/Dockerfile:22` (`ARG INTERCEPTOR_VERSION`) | — | openFHIR interceptor; fetched at build from the GitHub release asset (`releases ≥ 2.0.0` ship the jar; older tags have none → build fails). No sha256 asset published upstream. |
 | hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:93` | team image on `ghcr.io/freshehrteam` (CI `build-images.yml`); deploy with explicit `IMAGE_TAG=` pushes (`make images-push`) |
 | eps-mappings     | —                                  | `charts/health-stack/values.yaml:101`| team image on `ghcr.io/freshehrteam`; same `IMAGE_TAG=` rule |
 | hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
@@ -71,9 +73,13 @@ Compose and chart MUST declare the same tag for shared components;
   both. To pick up realm changes: compose = `make destroy` (volume wipe);
   live cluster = the runbook in `charts/health-stack/README.md`
   ("Runbook: updating the realm on a LIVE cluster").
-- **The interceptor JAR is compiled against the HAPI base version**
-  (`ARG HAPI_BASE`) — a major HAPI bump means rebuilding the JAR from the
-  interceptor repo first.
+- **The interceptor JAR is compiled against a specific HAPI FHIR library
+  version** (its deps are `provided`-scope, so they bind to whatever the HAPI
+  base image ships at runtime). Keep `ARG INTERCEPTOR_VERSION` compatible with
+  `ARG HAPI_BASE`: a major HAPI bump means pinning a newer interceptor release
+  built against that generation — NOT rebuilding from source. The JAR is fetched
+  from the release asset (`curl -f`), so a version with no published `.jar`
+  asset (anything below `2.0.0`) fails the build by design.
 - **`make destroy` wipes hades' terminology data too** (`hades-data` volume).
   fhir.db self-restores on the next boot (entrypoint bootstrap — takes minutes;
   use `WAIT_TIMEOUT=420 make wait`), but any imported SNOMED/LOINC db is lost
