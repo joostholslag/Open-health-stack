@@ -1,0 +1,19 @@
+# Shell scripts and container-side files MUST stay LF, whatever core.autocrlf
+# says locally. A CRLF checkout makes bash read the carriage return as part of
+# each command — `$'\r': command not found`, `set: -\r: invalid option`, and a
+# syntax error on the first function definition. Same for anything that ends up
+# inside a Linux container.
+.gitattributes  text eol=lf
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+entrypoint.sh   text eol=lf
+Makefile        text eol=lf
+
+# Config the containers read: nginx/Spring/compose all parse these as text, and
+# a stray \r has bitten config parsing before.
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.conf          text eol=lf
+*.sql           text eol=lf
+*.json          text eol=lf
