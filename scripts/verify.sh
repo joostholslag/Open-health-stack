@@ -140,4 +140,16 @@ esac
 gcode=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$target")
 assert_eq "FHIR read-back GET $target" 200 "$gcode"
 
+# ── 9. Cleanup ───────────────────────────────────────────────────────────────
+# Remove the verify Patient: it has no UI-created EHR link, and leaving it in
+# the HAPI patient list breaks the nictiz-ui e2e suite (its selectPatient
+# helper picks the LAST listed patient and then waits forever for a
+# composition view this patient can't render).
+dcode=$(curl -sk -o /dev/null -w '%{http_code}' -X DELETE \
+  -H "Authorization: Bearer $TOKEN" "$EDGE/fhir/Patient/$PATIENT_ID")
+case "$dcode" in
+  200|204) pass "cleanup: deleted Patient/$PATIENT_ID";;
+  *)       fail "cleanup: DELETE Patient/$PATIENT_ID (HTTP $dcode)";;
+esac
+
 finish
