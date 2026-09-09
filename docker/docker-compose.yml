@@ -127,7 +127,7 @@ services:
 
   # ── Keycloak (OIDC identity provider) ─────────────────────────────────────
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.2
+    image: quay.io/keycloak/keycloak:26.7.3
     container_name: freshehr-keycloak
     command: ["start-dev", "--import-realm"]
     ports:
