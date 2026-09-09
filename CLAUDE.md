@@ -1,0 +1,114 @@
+# freshehr-open-health-stack — working notes for Claude
+
+## What this repo is
+
+An openEHR → FHIR health-data stack in three IaC layers, all driven from the
+root `Makefile` (run `make help`):
+
+1. **docker-compose** (`docker/`) — the whole 7-service stack locally. This is
+   the **verification environment**: every upgrade is proven here.
+2. **Helm chart** (`charts/health-stack/`) — the same topology for Kubernetes.
+   Verified via `make helm-lint` / `make helm-render` only (no live cluster
+   needed for routine changes).
+3. **Terraform** (`terraform/`) — Hetzner k3s provisioning that installs the
+   chart.
+
+Services: HAPI FHIR (+ openFHIR interceptor), EHRbase, openFHIR engine,
+Keycloak, oauth2-proxy, one shared Postgres, nginx.
+
+## Gitignored prerequisites (needed before anything builds/runs)
+
+- `docker/openfhir/license/openfhir-license.json` — vendor license
+  (request at https://open-fhir.com#access).
+- `docker/hapi/extra-classes/*.jar` — the openFHIR HAPI interceptor JAR, built
+  from https://github.com/openFHIR/openfhir-hapi-interceptor
+  (`mvn clean package -DskipTests`).
+
+## Image pins — every location
+
+Compose and chart MUST declare the same tag for shared components;
+`make versions` fails on any mismatch.
+
+| Component        | Compose                            | Chart                                | Notes |
+|------------------|------------------------------------|--------------------------------------|-------|
+| ehrbase          | `docker/docker-compose.yml:75`     | `charts/health-stack/values.yaml:200`| version-coupled env, see below |
+| keycloak         | `docker/docker-compose.yml:129`    | `charts/health-stack/values.yaml:287`| |
+| oauth2-proxy     | `docker/docker-compose.yml:207`    | `charts/health-stack/values.yaml:317`| |
+| postgres         | `docker/docker-compose.yml:238`    | `charts/health-stack/values.yaml:331`| must stay the ehrbase vendor image |
+| openfhir         | `docker/docker-compose.yml:275`    | `charts/health-stack/values.yaml:250`| must stay `openfhir-enterprise` |
+| nginx            | `docker/docker-compose.yml:317`    | — (k8s uses ingress-nginx)           | |
+| hapi (upstream)  | `docker/hapi/Dockerfile:22` (`ARG HAPI_BASE`) | —                         | the real HAPI pin; compose builds locally |
+| hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:93` | team image; deploy with explicit `IMAGE_TAG=` pushes (`make images-push`) |
+| eps-mappings     | —                                  | `charts/health-stack/values.yaml:101`| team image; same `IMAGE_TAG=` rule |
+
+## Hard constraints (learned the hard way — do not "simplify" these away)
+
+- **openFHIR must stay `openfhir/openfhir-enterprise`**, never the community
+  `openfhir` image: only enterprise ships the Postgres repository
+  (`openfhir.db.type=postgres`); community is Mongo-only and dies with
+  "No qualifying bean … FhirConnectModelRepository".
+- **`SPRING_CONFIG_ADDITIONAL_LOCATION: file:/app/application.yaml`** on the
+  openfhir service is load-bearing: the Docker Hub image sets no WORKDIR, so
+  the mounted config is silently ignored without it (symptom is a bean error,
+  not a config error). See the comment at `docker/docker-compose.yml:277`.
+- **Postgres must stay `ehrbase/ehrbase-v2-postgres`** — EHRbase needs the
+  extensions/roles that vendor image pre-provisions.
+- **EHRbase `MANAGEMENT_ENDPOINT_HEALTH_*` is version-coupled to the image tag
+  and must match in BOTH layers**: ≥2.35 needs `…HEALTH_ACCESS: READ_ONLY`,
+  ≤2.28 needs `…HEALTH_ENABLED: "true"`; Spring treats the pair as mutually
+  exclusive, so the wrong one for the image generation crashes EHRbase at
+  startup. Locations: `docker/docker-compose.yml` ehrbase env +
+  `charts/health-stack/values.yaml` ehrbase.env.
+- **Bump `charts/health-stack/Chart.yaml` `version:` on EVERY chart change** —
+  terraform's helm provider only re-renders when that version changes;
+  without a bump `terraform apply` silently reports "No changes".
+- **Keycloak `--import-realm` never updates an existing realm.** The realm
+  JSON is duplicated in `docker/keycloak/realm-freshehr.json` AND
+  `charts/health-stack/config/realm-freshehr.json.tpl` — synced BY HAND; edit
+  both. To pick up realm changes: compose = `make destroy` (volume wipe);
+  live cluster = the runbook in `charts/health-stack/README.md`
+  ("Runbook: updating the realm on a LIVE cluster").
+- **The interceptor JAR is compiled against the HAPI base version**
+  (`ARG HAPI_BASE`) — a major HAPI bump means rebuilding the JAR from the
+  interceptor repo first.
+
+## Known silent failure
+
+Stale/colliding openFHIR mappers (reused Postgres volume, or IPS + EPS sets
+loaded together) keep `/openfhir/tofhir` answering **200** — but with a bare
+`{Bundle, Composition}` and zero clinical resources. `make smoke` stays green
+through this; **only `make verify` catches it** (tofhir entry-count check).
+Fix: `make destroy`, clean start.
+
+## Canonical clean start
+
+```bash
+make destroy && make build && make up && make wait && make template && make bootstrap && make verify
+```
+
+## Test commands
+
+| Command | What it proves |
+|---|---|
+| `make wait` | every service answers (incl. HAPI, which has no compose healthcheck) |
+| `make smoke` | auth matrix: 401 bare / 200 Bearer, health + discovery public |
+| `make verify` | data plane: templates, tenant-visible mappings, EPS ingest → 201, AQL row, tofhir with real clinical resources, read-back |
+| `make versions` | declared pins (compose/Dockerfile/chart) vs running; fails on compose↔chart drift |
+| `make helm-lint` / `make helm-render ENV=dev` | chart sanity (`ENV=hetzner` render needs out-of-band secrets) |
+| UI: `cd ../freshehr-nictiz-ui/app && npm run stack:verify` | unit tests + register + seed + full Playwright e2e against the running stack |
+
+## Upgrading container versions
+
+Use the `/upgrade-stack` skill (`.claude/skills/upgrade-stack/SKILL.md`) — the
+per-cycle runbook: discover releases, changelog checklist, pin both layers,
+clean start, `make verify`, UI `stack:verify`, report.
+
+## Follow-ups (recorded, out of scope so far)
+
+- Pin the four unpinned terraform add-on Helm charts
+  (`terraform/modules/k8s-apps/main.tf`).
+- Pin the chart's `hapi`/`eps-mappings` tags to pushed `IMAGE_TAG=` versions
+  instead of `latest`.
+- Revive the commented-out CI workflows under the `freshehrteam` org (unit
+  tests + helm-lint on PRs; stack e2e stays local — needs the gitignored
+  license/JAR).
