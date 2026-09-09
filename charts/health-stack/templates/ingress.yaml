@@ -8,12 +8,13 @@ metadata:
   annotations:
     # This Ingress carries ONLY /fhir. Every nginx.ingress annotation below is
     # Ingress-scoped, not path-scoped, so each route whose annotation set differs
-    # needs its own object — which is why this chart renders four:
+    # needs its own object — which is why this chart renders five:
     #
-    #   health-stack           /fhir           HAPI          — edge OAuth (auth-url), no rewrite
-    #   health-stack-ehrbase   /ehrbase        EHRbase       — NO edge auth, no rewrite
-    #   health-stack-openfhir  /openfhir       openFHIR      — NO edge auth (native), + rewrite
-    #   health-stack-auth      /auth, /oauth2  keycloak/o2p  — public, no rewrite
+    #   health-stack              /fhir           HAPI          — edge OAuth (auth-url), no rewrite
+    #   health-stack-ehrbase      /ehrbase        EHRbase       — NO edge auth, no rewrite
+    #   health-stack-openfhir     /openfhir       openFHIR      — NO edge auth (native), + rewrite
+    #   health-stack-terminology  /terminology    hades         — edge OAuth (auth-url), + rewrite
+    #   health-stack-auth         /auth, /oauth2  keycloak/o2p  — public, no rewrite
     #
     # No rewrite-target here on purpose: HAPI genuinely serves under /fhir, so the
     # path passes through untouched (same as the compose nginx). Only openFHIR needs
@@ -165,9 +166,70 @@ spec:
                   number: {{ .Values.openfhir.service.port }}
 {{- end }}
 ---
+{{- if and .Values.ingress.enabled .Values.hades.enabled }}
+{{/*
+Fourth Ingress: /terminology → hades, needing BOTH deviations at once — which
+is exactly why it gets its own object (rewrite-target and auth-url are each
+Ingress-scoped):
+
+  - rewrite (like /openfhir): hades serves under /fhir/... on its own port,
+    and /fhir at the edge belongs to HAPI, so the prefix is stripped — public
+    shape /terminology/fhir/CodeSystem/$lookup.
+  - edge auth (like /fhir): hades has NO application-level auth, and once an
+    operator imports SNOMED CT its license terms preclude serving it openly —
+    so ingress-nginx gates it with an auth-url subrequest to oauth2-proxy
+    (mirrors the compose nginx /terminology location's auth_request).
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack-terminology
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hades") | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    {{- with .Values.ingress.annotations }}
+    {{- range $k, $v := . }}
+    {{- if ne $k "nginx.ingress.kubernetes.io/use-regex" }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+    {{- if .Values.ingress.auth.enabled }}
+    nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.oauth2Proxy.service.port }}/oauth2/auth"
+    {{- if .Values.ingress.auth.signin }}
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
+    {{- end }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /terminology(?:/(.*))?$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hades
+                port:
+                  number: {{ .Values.hades.service.port }}
+{{- end }}
+---
 {{- if and .Values.ingress.enabled .Values.keycloak.enabled }}
 {{/*
-Fourth Ingress: the PUBLIC auth routes — deliberately no auth annotations.
+Fifth Ingress: the PUBLIC auth routes — deliberately no auth annotations.
 
   /auth    → Keycloak. Token + OIDC discovery endpoints must be reachable by
              every caller; the admin console has its own login. No rewrite:

@@ -5,7 +5,7 @@
 An openEHR → FHIR health-data stack in three IaC layers, all driven from the
 root `Makefile` (run `make help`):
 
-1. **docker-compose** (`docker/`) — the whole 7-service stack locally. This is
+1. **docker-compose** (`docker/`) — the whole 8-service stack locally. This is
    the **verification environment**: every upgrade is proven here.
 2. **Helm chart** (`charts/health-stack/`) — the same topology for Kubernetes.
    Verified via `make helm-lint` / `make helm-render` only (no live cluster
@@ -13,8 +13,9 @@ root `Makefile` (run `make help`):
 3. **Terraform** (`terraform/`) — Hetzner k3s provisioning that installs the
    chart.
 
-Services: HAPI FHIR (+ openFHIR interceptor), EHRbase, openFHIR engine,
-Keycloak, oauth2-proxy, one shared Postgres, nginx.
+Services: HAPI FHIR (+ openFHIR interceptor), EHRbase, openFHIR engine, hades
+(FHIR terminology server, `/terminology` at the edge), Keycloak, oauth2-proxy,
+one shared Postgres, nginx.
 
 ## Gitignored prerequisites (needed before anything builds/runs)
 
@@ -31,15 +32,17 @@ Compose and chart MUST declare the same tag for shared components;
 
 | Component        | Compose                            | Chart                                | Notes |
 |------------------|------------------------------------|--------------------------------------|-------|
-| ehrbase          | `docker/docker-compose.yml:75`     | `charts/health-stack/values.yaml:200`| version-coupled env, see below |
-| keycloak         | `docker/docker-compose.yml:129`    | `charts/health-stack/values.yaml:287`| |
-| oauth2-proxy     | `docker/docker-compose.yml:207`    | `charts/health-stack/values.yaml:317`| |
-| postgres         | `docker/docker-compose.yml:238`    | `charts/health-stack/values.yaml:331`| must stay the ehrbase vendor image |
-| openfhir         | `docker/docker-compose.yml:275`    | `charts/health-stack/values.yaml:250`| must stay `openfhir-enterprise` |
-| nginx            | `docker/docker-compose.yml:317`    | — (k8s uses ingress-nginx)           | |
+| ehrbase          | `docker/docker-compose.yml:76`     | `charts/health-stack/values.yaml:207`| version-coupled env, see below |
+| keycloak         | `docker/docker-compose.yml:130`    | `charts/health-stack/values.yaml:328`| |
+| oauth2-proxy     | `docker/docker-compose.yml:208`    | `charts/health-stack/values.yaml:358`| |
+| postgres         | `docker/docker-compose.yml:239`    | `charts/health-stack/values.yaml:372`| must stay the ehrbase vendor image |
+| openfhir         | `docker/docker-compose.yml:276`    | `charts/health-stack/values.yaml:257`| must stay `openfhir-enterprise` |
+| nginx            | `docker/docker-compose.yml:342`    | — (k8s uses ingress-nginx)           | |
 | hapi (upstream)  | `docker/hapi/Dockerfile:22` (`ARG HAPI_BASE`) | —                         | the real HAPI pin; compose builds locally |
 | hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:93` | team image on `ghcr.io/freshehrteam` (CI `build-images.yml`); deploy with explicit `IMAGE_TAG=` pushes (`make images-push`) |
 | eps-mappings     | —                                  | `charts/health-stack/values.yaml:101`| team image on `ghcr.io/freshehrteam`; same `IMAGE_TAG=` rule |
+| hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
+| hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:108`| team image `ghcr.io/freshehrteam/hades`; same `IMAGE_TAG=` rule as the other team images |
 
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
@@ -71,6 +74,10 @@ Compose and chart MUST declare the same tag for shared components;
 - **The interceptor JAR is compiled against the HAPI base version**
   (`ARG HAPI_BASE`) — a major HAPI bump means rebuilding the JAR from the
   interceptor repo first.
+- **`make destroy` wipes hades' terminology data too** (`hades-data` volume).
+  fhir.db self-restores on the next boot (entrypoint bootstrap — takes minutes;
+  use `WAIT_TIMEOUT=420 make wait`), but any imported SNOMED/LOINC db is lost
+  and must be re-imported (`make hades-snomed SNOMED_ZIP=...`).
 
 ## Known silent failure
 
@@ -90,9 +97,9 @@ make destroy && make build && make up && make wait && make template && make boot
 
 | Command | What it proves |
 |---|---|
-| `make wait` | every service answers (incl. HAPI, which has no compose healthcheck) |
-| `make smoke` | auth matrix: 401 bare / 200 Bearer, health + discovery public |
-| `make verify` | data plane: templates, tenant-visible mappings, EPS ingest → 201, AQL row, tofhir with real clinical resources, read-back |
+| `make wait` | every service answers (incl. HAPI, which has no compose healthcheck, and hades via `/terminology`) |
+| `make smoke` | auth matrix: 401 bare / 200 Bearer (incl. `/terminology/fhir/metadata`), health + discovery public |
+| `make verify` | data plane: templates, tenant-visible mappings, EPS ingest → 201, AQL row, tofhir with real clinical resources, hades `$lookup` content, read-back |
 | `make versions` | declared pins (compose/Dockerfile/chart) vs running; fails on compose↔chart drift |
 | `make helm-lint` / `make helm-render ENV=dev` | chart sanity (`ENV=hetzner` render needs out-of-band secrets) |
 | UI: `cd ../freshehr-nictiz-ui/app && npm run stack:verify` | unit tests + register + seed + full Playwright e2e against the running stack |

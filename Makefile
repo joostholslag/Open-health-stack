@@ -11,7 +11,7 @@ ENV ?= hetzner
 # Only one cloud is supported (Hetzner k3s); see terraform/envs/.
 TF_ENV := terraform/envs/hetzner
 
-# GHCR namespace + tag for the two custom images (see `make images`).
+# GHCR namespace + tag for the three custom images (see `make images`).
 IMAGE_ORG ?= ghcr.io/freshehrteam
 IMAGE_TAG ?= latest
 
@@ -42,11 +42,11 @@ certs: ## Generate self-signed dev TLS certs for the compose nginx
 	@echo "Wrote $(DOCKER_DIR)/nginx/certs/tls.{crt,key}"
 
 .PHONY: build
-build: ## Build the custom HAPI image (layers the interceptor JAR)
-	$(COMPOSE) build hapi
+build: ## Build the custom images: hapi (layers the interceptor JAR) + hades (fetches the upstream JAR)
+	$(COMPOSE) build hapi hades
 
 .PHONY: up
-up: env certs ## Bring up the whole compose stack (7 services)
+up: env certs ## Bring up the whole compose stack (8 services)
 	$(COMPOSE) up -d
 
 .PHONY: down
@@ -70,17 +70,21 @@ config: ## Validate + render the merged compose config
 	$(COMPOSE) config
 
 .PHONY: images
-images: ## Build both custom images (IMAGE_ORG/IMAGE_TAG override the defaults)
+images: ## Build all three custom images (IMAGE_ORG/IMAGE_TAG override the defaults)
 	@# hapi-openfhir needs the interceptor JAR in docker/hapi/extra-classes/ first.
 	@test -n "$$(ls $(DOCKER_DIR)/hapi/extra-classes/*.jar 2>/dev/null)" || { echo "ERROR: no interceptor JAR in $(DOCKER_DIR)/hapi/extra-classes/ — see README blockers"; exit 1; }
 	docker build -t $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG) $(DOCKER_DIR)/hapi
 	docker build -f $(DOCKER_DIR)/openfhir/bootstrap.Dockerfile -t $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG) $(DOCKER_DIR)/openfhir
-	@echo "Built: $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)  $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)"
+	@# hades: the upstream JAR version is pinned by the Dockerfile's ARG
+	@# HADES_VERSION/HADES_SHA256; IMAGE_TAG stays the team's release tag.
+	docker build -t $(IMAGE_ORG)/hades:$(IMAGE_TAG) $(DOCKER_DIR)/hades
+	@echo "Built: $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)  $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)  $(IMAGE_ORG)/hades:$(IMAGE_TAG)"
 
 .PHONY: images-push
-images-push: images ## Build then push both images to GHCR (needs `docker login ghcr.io` with a PAT that has write:packages)
+images-push: images ## Build then push the custom images to GHCR (needs `docker login ghcr.io` with a PAT that has write:packages)
 	docker push $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)
 	docker push $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)
+	docker push $(IMAGE_ORG)/hades:$(IMAGE_TAG)
 
 .PHONY: token
 token: ## Print a Bearer access token from Keycloak (client_credentials, api-client)
@@ -193,19 +197,34 @@ smoke: ## Auth matrix against the running stack: data routes must 401 bare / 200
 	@TOKEN=$$($(MAKE) --no-print-directory token); \
 	[ -n "$$TOKEN" ] || { echo "FAIL: no token from Keycloak (is the stack up?)"; exit 1; }; \
 	fail=0; \
-	for r in fhir/metadata ehrbase/rest/status openfhir/fc/context; do \
+	for r in fhir/metadata ehrbase/rest/status openfhir/fc/context terminology/fhir/metadata; do \
 		no=$$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost/$$r"); \
 		ok=$$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$TOKEN" "https://localhost/$$r"); \
 		[ "$$no" = 401 ] && [ "$$ok" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
-		printf '  %-22s bare:%s (want 401)  bearer:%s (want 200)  %s\n' "/$$r" "$$no" "$$ok" "$$verdict"; \
+		printf '  %-30s bare:%s (want 401)  bearer:%s (want 200)  %s\n' "/$$r" "$$no" "$$ok" "$$verdict"; \
 	done; \
 	health=$$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/openfhir/health); \
 	[ "$$health" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
-	printf '  %-22s bare:%s (want 200, permitAll)  %s\n' "/openfhir/health" "$$health" "$$verdict"; \
+	printf '  %-30s bare:%s (want 200, permitAll)  %s\n' "/openfhir/health" "$$health" "$$verdict"; \
 	disc=$$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/auth/realms/freshehr/.well-known/openid-configuration); \
 	[ "$$disc" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
-	printf '  %-22s %s (want 200)  %s\n' "OIDC discovery" "$$disc" "$$verdict"; \
+	printf '  %-30s %s (want 200)  %s\n' "OIDC discovery" "$$disc" "$$verdict"; \
 	exit $$fail
+
+.PHONY: hades-snomed
+hades-snomed: ## Import a local SNOMED CT RF2 zip into hades (SNOMED_ZIP=/path/to/SnomedCT_...zip)
+	@# Runs the import in a one-off container against the shared hades-data
+	@# volume, entrypoint bypassed (a plain `hades import`, no serve). ~4g heap:
+	@# a SNOMED import needs far more than the serving default (-Xmx1g).
+	@# MLDS/TRUD auto-download variants are documented in the README.
+	@test -n "$(SNOMED_ZIP)" || { echo "ERROR: set SNOMED_ZIP=/path/to/SnomedCT_RF2_release.zip"; exit 1; }
+	$(COMPOSE) run --rm --no-deps --entrypoint "" \
+		-v "$(abspath $(SNOMED_ZIP)):/import/snomed.zip:ro" \
+		-e JAVA_OPTS= hades \
+		java -Xmx4g -jar /app/hades.jar import /data/snomed.db /import/snomed.zip
+	@# serve scans /data/*.db at startup, so a restart picks the new file up.
+	$(COMPOSE) restart hades
+	@echo "SNOMED imported. Consider raising HADES_JAVA_OPTS to -Xmx2g in docker/.env."
 
 .PHONY: wait
 wait: ## Block until every service answers (incl. HAPI, which has no compose healthcheck)

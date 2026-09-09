@@ -2,9 +2,10 @@ apiVersion: v2
 name: health-stack
 description: >-
   freshehr-open-health-stack — a dockerized openEHR → FHIR health-data stack
-  (HAPI FHIR with the openFHIR interceptor, EHRbase, the openFHIR engine, and
-  their Postgres backends). Runs on any Kubernetes cluster; ships values files
-  for Hetzner k3s (prod) and kind/minikube (dev).
+  (HAPI FHIR with the openFHIR interceptor, EHRbase, the openFHIR engine, the
+  hades terminology server, and their Postgres backends). Runs on any
+  Kubernetes cluster; ships values files for Hetzner k3s (prod) and
+  kind/minikube (dev).
 type: application
 
 # Chart version — bump on EVERY chart change (SemVer).
@@ -12,7 +13,7 @@ type: application
 # release when an input changes, and for a local chart path that input is THIS
 # version — template/config edits without a bump make `terraform apply` report
 # "No changes" and the cluster silently keeps the old manifests.
-version: 0.2.3
+version: 0.3.0
 
 # The version of the app stack this chart deploys. Informational; the actual
 # image tags are set per-workload under `images.*` / `.image.tag` in values.yaml.

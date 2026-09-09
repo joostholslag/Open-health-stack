@@ -1,9 +1,9 @@
 # health-stack Helm chart
 
 The **freshehr-open-health-stack** application layer as a Helm chart: HAPI FHIR
-(with the openFHIR interceptor), EHRbase, the openFHIR engine, Keycloak (OIDC
-IdP, realm `freshehr`), oauth2-proxy (edge Bearer validator), and their shared
-Postgres backend.
+(with the openFHIR interceptor), EHRbase, the openFHIR engine, hades (FHIR
+terminology server), Keycloak (OIDC IdP, realm `freshehr`), oauth2-proxy (edge
+Bearer validator), and their shared Postgres backend.
 
 Runs on any Kubernetes cluster. Two values files ship with it — `values-hetzner.yaml`
 (prod) and `values-dev.yaml` (kind/minikube). The templates never branch on the cloud
@@ -35,7 +35,7 @@ helm upgrade --install health-stack charts/health-stack \
 
 Prod uses ingress-nginx + cert-manager + Let's Encrypt.
 
-### Routing and auth — four Ingress objects
+### Routing and auth — five Ingress objects
 
 `auth-url` and `rewrite-target` are **Ingress-level** annotations, not per-path, so
 each route with a different annotation set needs its own object:
@@ -45,7 +45,15 @@ each route with a different annotation set needs its own object:
 | `health-stack` | `/fhir` | HAPI | ✅ | — |
 | `health-stack-ehrbase` | `/ehrbase` | EHRbase | ❌ (validates natively) | — |
 | `health-stack-openfhir` | `/openfhir` | openFHIR | ❌ (validates natively, per-API scopes) | strips prefix |
+| `health-stack-terminology` | `/terminology` | hades | ✅ (no app-level auth; SNOMED licensing) | strips prefix |
 | `health-stack-auth` | `/auth`, `/oauth2` | Keycloak / oauth2-proxy | public | — |
+
+hades serves its FHIR API under `/fhir/...` on its own port, and `/fhir` at the
+edge belongs to HAPI — so the public shape is
+`https://<host>/terminology/fhir/CodeSystem/$lookup` (prefix stripped, like
+`/openfhir`). It carries the same edge gate as `/fhir`: hades has no
+application-level auth, and once SNOMED CT is imported its license terms
+preclude serving it openly.
 
 The whole stack authenticates against the in-cluster **Keycloak** (realm
 `freshehr`, imported from
@@ -138,13 +146,17 @@ only there, and the community `openfhir` image is Mongo-only.
 | `ingress.className` | `nginx` | Ingress class |
 | `ingress.tls.enabled` | `false` | cert-manager TLS |
 | `ingress.tls.clusterIssuer` | `letsencrypt-prod` | Issuer name referenced by the Ingress |
-| `ingress.auth.enabled` | `false` | Edge OAuth (`auth-url` → oauth2-proxy) on `/fhir` (**on** in `values-hetzner.yaml`; `/ehrbase` and `/openfhir` validate natively) |
+| `ingress.auth.enabled` | `false` | Edge OAuth (`auth-url` → oauth2-proxy) on `/fhir` + `/terminology` (**on** in `values-hetzner.yaml`; `/ehrbase` and `/openfhir` validate natively) |
 | `ingress.auth.signin` | `true` | Also emit `auth-signin` (browser redirect into the oauth2-proxy login flow) |
 | `keycloak.enabled` / `oauth2Proxy.enabled` | `true` | The OIDC IdP + edge validator workloads |
 | `secrets.values.keycloak.*` | dev values | Admin/DB creds + OIDC client secrets. **Blanked in `values-hetzner.yaml`** so a bare prod render fails (`required`); Terraform supplies generated values |
 | `clusterIssuer.create` | `false` | Also render a Let's Encrypt ClusterIssuer |
-| `images.hapi.*` / `images.ipsMappings.*` | `:latest` | Custom image repo/tag (pin per env) |
+| `images.hapi.*` / `images.ipsMappings.*` / `images.hades.*` | `:latest` | Custom image repo/tag (pin per env) |
 | `hapi.replicas` / `hapi.resources` | `1` / `{}` | HAPI sizing |
+| `hades.enabled` | `true` | The hades terminology server workload (PVC + Deployment + Service + Ingress) |
+| `hades.storage` | `5Gi` | PVC size for hades' terminology `.db` files (raise **before** importing SNOMED) |
+| `hades.env.JAVA_OPTS` | `-Xmx1g` | hades heap (`-Xmx2g` in `values-hetzner.yaml` for SNOMED-loaded sizing) |
+| `hades.startupFailureThreshold` | `60` | First-boot budget: 10s × this while hades bootstraps its FHIR packages |
 | `postgres.storage` | `5Gi` | PVC size for the shared Postgres |
 | `secrets.create` | `false` | Render placeholder Secrets (dev only) |
 
@@ -192,6 +204,78 @@ runs outside any request context) live under a different tenant than
 `POST /$bootstrap` plus the `*_conceptmap.json` POSTs, i.e. the equivalent of
 `make bootstrap` against `https://<host>` — with a freshehr-realm token. Old
 rows are orphaned, not migrated.
+
+## Runbook: importing SNOMED CT into hades (one-off Job)
+
+Out of the box hades serves the FHIR core packages only (bootstrapped on first
+boot, no license needed). SNOMED CT is an optional operator import — free
+licenses via [MLDS](https://mlds.ihtsdotools.org/) (member territories) or
+[NHS TRUD](https://isd.digital.nhs.uk/) (UK). Run the import as a **Job**, not
+`kubectl exec` into the serving pod: an import runs 30–60 min and needs its
+own ~4Gi heap, which would blow the serving pod's 3Gi limit.
+
+1. **Expand the PVC first** if needed (hcloud CSI supports online expansion;
+   snomed.db Intl edition is ≈ 3–4 GiB), then release it — the PVC is RWO and
+   the Job needs it:
+
+   ```bash
+   kubectl -n health-stack patch pvc hades-data \
+     -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+   kubectl -n health-stack scale deploy/hades --replicas=0
+   ```
+
+2. **Get the release onto the volume** — either let hades auto-download it
+   (MLDS: `install /data/snomed.db --dist ihtsdo.mlds/<member> --username ...
+   --password file`, TRUD: `--dist uk.nhs/sct-monolith --api-key file`, creds
+   from an out-of-band Secret mounted into the Job), or `kubectl cp` a local
+   RF2 zip into `/data/import/` via a temporary pod mounting the PVC and run
+   `import /data/snomed.db /data/import/snomed.zip`.
+
+3. **Job skeleton** — same image, entrypoint overridden with the one-shot
+   import command:
+
+   ```yaml
+   apiVersion: batch/v1
+   kind: Job
+   metadata:
+     name: hades-snomed-import
+     namespace: health-stack
+   spec:
+     backoffLimit: 0
+     template:
+       spec:
+         restartPolicy: Never
+         containers:
+           - name: import
+             image: ghcr.io/freshehrteam/hades:<tag>   # match images.hades
+             command: ["java", "-Xmx4g", "-jar", "/app/hades.jar",
+                       "import", "/data/snomed.db", "/data/import/snomed.zip"]
+             resources:
+               requests: {memory: 4Gi}
+               limits:   {memory: 5Gi}
+             volumeMounts:
+               - {name: data, mountPath: /data}
+         volumes:
+           - name: data
+             persistentVolumeClaim: {claimName: hades-data}
+   ```
+
+4. **Wait, then scale back up** — the entrypoint's `serve /data/*.db` picks up
+   the new file automatically:
+
+   ```bash
+   kubectl -n health-stack wait --for=condition=complete job/hades-snomed-import --timeout=2h
+   kubectl -n health-stack scale deploy/hades --replicas=1
+   ```
+
+   Consider raising `hades.env.JAVA_OPTS` to `-Xmx2g` (already the
+   `values-hetzner.yaml` default) for SNOMED-loaded serving.
+
+LOINC works the same way with a manually-downloaded `Loinc_X.zip` and
+`import /data/loinc.db ...`.
+
+⚠️ The terminology data lives only on the `hades-data` PVC: deleting it means
+re-importing SNOMED/LOINC (the FHIR core packages re-bootstrap themselves).
 
 ## Caveat: storage class is install-time
 

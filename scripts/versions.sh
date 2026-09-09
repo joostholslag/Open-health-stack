@@ -21,6 +21,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 COMPOSE_FILE="$ROOT/docker/docker-compose.yml"
 VALUES_FILE="$ROOT/charts/health-stack/values.yaml"
 HAPI_DOCKERFILE="$ROOT/docker/hapi/Dockerfile"
+HADES_DOCKERFILE="$ROOT/docker/hades/Dockerfile"
 
 # Tag declared in compose for an image whose repo path ends in $1.
 # Handles both plain lines (image: repo:tag) and ${VAR:-repo:tag} defaults.
@@ -74,6 +75,9 @@ row postgres      "ehrbase-v2-postgres"          "ehrbase/ehrbase-v2-postgres"
 row keycloak      "keycloak/keycloak"            "quay.io/keycloak/keycloak"
 row openfhir      "openfhir-enterprise"          "openfhir/openfhir-enterprise"
 row oauth2-proxy  "oauth2-proxy/oauth2-proxy"    "quay.io/oauth2-proxy/oauth2-proxy"
+# hades is a team image shared by both layers (compose ${HADES_IMAGE:-...}
+# default vs chart images.hades) — the tags must agree like any shared pin.
+row hades         "freshehrteam/hades"           "ghcr.io/freshehrteam/hades"
 
 # Components that exist in only one layer — informational, no match check:
 # - hapi: compose builds locally FROM the Dockerfile pin; the chart pulls the
@@ -86,6 +90,10 @@ printf "$FMT" "hapi (base)"  "${hapi_base:-?}" "(local build)"        "${hapi_ru
 printf "$FMT" "hapi (chart)" "-"               "$(chart_tag ghcr.io/freshehrteam/hapi-openfhir)" "-" "info"
 nginx_run=""; [ "$STACK_UP" = 1 ] && nginx_run=$(running_tag "nginx")
 printf "$FMT" "nginx"        "$(compose_tag nginx)" "(ingress-nginx)" "${nginx_run:--}" "info"
+# hades upstream JAR pin — lives in the Dockerfile ARG, not in any image tag
+# (analogous to hapi (base)). The image-tag row above tracks the TEAM tag.
+hades_jar=$(tr -d '\r' < "$HADES_DOCKERFILE" | sed -n 's/^ARG HADES_VERSION=\(.*\)$/\1/p')
+printf "$FMT" "hades (jar)"  "${hades_jar:-?}" "(Dockerfile ARG)"     "-" "info"
 
 # What the services say about themselves — catches a wrong-image-for-the-tag
 # situation no tag comparison can.
@@ -97,7 +105,11 @@ if [ "$STACK_UP" = 1 ]; then
       | sed -n 's/.*"ehrbase_version"[^"]*"\([^"]*\)".*/\1/p')
     hp=$(curl -sk -H "Authorization: Bearer $TOKEN" -H 'Accept: application/fhir+json' "$EDGE/fhir/metadata" \
       | tr -d '\n' | sed -n 's/.*"software"[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-    echo "self-reported: ehrbase=${eb:-?}  hapi=${hp:-?}"
+    # hades reports the upstream JAR version in its CapabilityStatement — this
+    # should equal the hades (jar) Dockerfile ARG above.
+    hd=$(curl -sk -H "Authorization: Bearer $TOKEN" "$EDGE/terminology/fhir/metadata" \
+      | tr -d '\n' | sed -n 's/.*"software"[^}]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    echo "self-reported: ehrbase=${eb:-?}  hapi=${hp:-?}  hades=${hd:-?}"
   else
     echo "self-reported: (no Keycloak token — skipped)"
   fi

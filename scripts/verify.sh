@@ -66,6 +66,22 @@ else
   fail "openFHIR fc/context empty or missing EPS context — run: make bootstrap"
 fi
 
+# ── 4b. hades terminology data plane ─────────────────────────────────────────
+# smoke already proves /terminology's auth codes; this proves hades actually
+# HAS content (the fhir.db bootstrap ran), same spirit as the tofhir
+# entry-count check. NOTE: hades serializes Parameters with the value BEFORE
+# the name ({"valueString":"Male","name":"display"}), so match the value key,
+# not a display:Male pair.
+lookup=$(curl -sk -w '\n%{http_code}' -H "Authorization: Bearer $TOKEN" \
+  "$EDGE/terminology/fhir/CodeSystem/\$lookup?system=http://hl7.org/fhir/administrative-gender&code=male")
+lcode=$(printf '%s' "$lookup" | tail -n1)
+lbody=$(printf '%s' "$lookup" | sed '$d')
+if [ "$lcode" = 200 ] && printf '%s' "$lbody" | grep -qF '"valueString":"Male"'; then
+  pass "hades \$lookup administrative-gender male → display Male"
+else
+  fail "hades \$lookup (HTTP $lcode) — empty hades? check 'docker compose logs hades' for the fhir.db bootstrap"
+fi
+
 # ── 5. EPS ingest through HAPI (+ interceptor) ───────────────────────────────
 # Patient first: the fixture Composition's subject references it, and without
 # an existing Patient the interceptor answers "No EHR ID found for patient".

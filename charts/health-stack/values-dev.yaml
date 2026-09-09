@@ -32,6 +32,10 @@ images:
     repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
     tag: local
     pullPolicy: IfNotPresent
+  hades:
+    repository: ghcr.io/freshehrteam/hades
+    tag: local
+    pullPolicy: IfNotPresent
 
 # Expose HAPI as NodePort 30080 for quick smoke tests without an ingress.
 hapi:

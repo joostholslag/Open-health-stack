@@ -1,6 +1,6 @@
 ---
 name: upgrade-stack
-description: Per-cycle runbook for bumping the stack's container images (EHRbase, Postgres, openFHIR, Keycloak, HAPI, oauth2-proxy, nginx) — discovery, changelog checklist, pinning both layers, clean-start verification, and the upgrade report. Use when asked to upgrade, bump, or update the stack's container/image versions.
+description: Per-cycle runbook for bumping the stack's container images (EHRbase, Postgres, openFHIR, Keycloak, HAPI, hades, oauth2-proxy, nginx) — discovery, changelog checklist, pinning both layers, clean-start verification, and the upgrade report. Use when asked to upgrade, bump, or update the stack's container/image versions.
 ---
 
 # /upgrade-stack — container upgrade runbook
@@ -28,6 +28,7 @@ Run `make versions` and save the table — it is the "before" half of the report
 | Keycloak | `https://quay.io/api/v1/repository/keycloak/keycloak/tag/?limit=25` + https://github.com/keycloak/keycloak/releases |
 | oauth2-proxy | https://github.com/oauth2-proxy/oauth2-proxy/releases |
 | openFHIR | `https://hub.docker.com/v2/repositories/openfhir/openfhir-enterprise/tags/?page_size=25` — enterprise ONLY; if the vendor publishes only `latest`, pin by digest and note it |
+| hades | https://github.com/wardle/hades/releases (or `https://api.github.com/repos/wardle/hades/releases/latest`) |
 | nginx | newest stable `-alpine` line (https://nginx.org/en/download.html) |
 
 ## 4. Changelog checklist (per component, before touching any pin)
@@ -44,6 +45,12 @@ Run `make versions` and save the table — it is the "before" half of the report
   `OAUTH2_PROXY_*` vars used in compose + chart).
 - **HAPI**: major version bump ⇒ the interceptor JAR must be recompiled
   against the new base (openfhir-hapi-interceptor repo) before `make build`.
+- **hades**: Java baseline still 21? CLI flag changes to `install`/`serve`
+  (used by `docker/hades/entrypoint.sh` and `make hades-snomed`)? On bump,
+  update `ARG HADES_VERSION` **and** `ARG HADES_SHA256` in
+  `docker/hades/Dockerfile` in lockstep — fetch the release's `.jar.sha256`
+  asset for the checksum. The image tag in compose/chart is the TEAM tag
+  (`ghcr.io/freshehrteam/hades:IMAGE_TAG`), not the upstream version.
 - **nginx**: config syntax deprecations affecting `docker/nginx/nginx.conf`.
 
 ## 5. Apply the pins — every location, BOTH layers
@@ -51,17 +58,21 @@ Run `make versions` and save the table — it is the "before" half of the report
 - `docker/docker-compose.yml` (ehrbase, keycloak, oauth2-proxy, postgres,
   openfhir default, nginx)
 - `docker/hapi/Dockerfile` (`ARG HAPI_BASE`)
+- `docker/hades/Dockerfile` (`ARG HADES_VERSION` + `ARG HADES_SHA256`, in lockstep)
 - `charts/health-stack/values.yaml` (same tags as compose)
 - **Bump `charts/health-stack/Chart.yaml` `version:`** (terraform no-ops otherwise)
 
 ## 6. Clean start (compose = the verification environment)
 
 ```bash
-make destroy && make build && make up && make wait && make template && make bootstrap
+make destroy && make build && make up && WAIT_TIMEOUT=420 make wait && make template && make bootstrap
 ```
 
 (`make destroy` wipes the local db volume — acceptable: template/bootstrap/seed
-recreate everything.)
+recreate everything. It also wipes `hades-data`: the first `make up` afterwards
+re-bootstraps fhir.db from the public package registry — takes minutes and
+needs egress, hence the `WAIT_TIMEOUT=420` — and **any imported SNOMED/LOINC
+db is lost and must be re-imported** with `make hades-snomed SNOMED_ZIP=...`.)
 
 ## 7. Stack gate
 
@@ -88,6 +99,7 @@ out-of-band secrets; lint covers both values files).
 
 ```bash
 git checkout -- docker/docker-compose.yml docker/hapi/Dockerfile \
+  docker/hades/Dockerfile \
   charts/health-stack/values.yaml charts/health-stack/Chart.yaml
 make destroy && make build && make up
 ```

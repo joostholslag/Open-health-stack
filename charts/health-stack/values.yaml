@@ -100,6 +100,13 @@ images:
     repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
     tag: latest
     pullPolicy: IfNotPresent
+  # hades FHIR terminology server (built from docker/hades/Dockerfile — the
+  # upstream JAR version is pinned by that Dockerfile's ARG HADES_VERSION; this
+  # tag is the team's release tag, same IMAGE_TAG= rule as the other images).
+  hades:
+    repository: ghcr.io/freshehrteam/hades
+    tag: latest
+    pullPolicy: IfNotPresent
 imagePullSecrets: []
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
@@ -260,6 +267,40 @@ openfhir:
   liveness:
     path: /health
     initialDelaySeconds: 120
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    port: 8080
+
+# ── hades (FHIR terminology server) ──────────────────────────────────────────
+# SNOMED CT / LOINC / FHIR-package terminology over $lookup/$expand/
+# $validate-code/$subsumes/$translate. No Postgres wiring: terminology lives in
+# *.db files on its own PVC, bootstrapped from the public FHIR package registry
+# on first boot (see docker/hades/entrypoint.sh). SNOMED/LOINC are optional
+# operator imports — runbook in charts/health-stack/README.md.
+hades:
+  enabled: true
+  # Must stay 1: the data PVC is ReadWriteOnce and the Deployment uses
+  # strategy Recreate so the old pod releases it before the new one mounts.
+  replicas: 1
+  image: {}            # falls back to .Values.images.hades
+  env:
+    # -Xmx1g fits the FHIR-packages-only bootstrap; values-hetzner raises it
+    # for SNOMED-loaded sizing.
+    JAVA_OPTS: "-Xmx1g"
+  # PVC size for /data. Raise BEFORE importing SNOMED (snomed.db Intl ≈ 3–4 GiB).
+  storage: 5Gi
+  resources: {}
+  # First boot downloads + indexes FHIR packages before the port opens; the
+  # startupProbe budgets 10s × this threshold (default 60 → 10 min) so
+  # readiness/liveness can stay tight once serving.
+  startupFailureThreshold: 60
+  readiness:
+    path: /fhir/metadata
+    periodSeconds: 10
+    failureThreshold: 3
+  liveness:
+    path: /fhir/metadata
     periodSeconds: 20
   service:
     type: ClusterIP

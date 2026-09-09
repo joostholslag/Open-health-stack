@@ -51,6 +51,9 @@ images:
   ipsMappings:
     repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
     tag: "0.1.0"
+  hades:
+    repository: ghcr.io/freshehrteam/hades
+    tag: "0.1.0"
 
 # Production HAPI sizing (matches patch-hapi-resources.yaml) + point HAPI at the
 # in-cluster openFHIR engine (local mode).
@@ -66,6 +69,25 @@ hapi:
     limits:
       cpu: "2"
       memory: "2Gi"
+
+# hades sized for a SNOMED-loaded server: bigger heap, bigger PVC (snomed.db
+# Intl ≈ 3–4 GiB + fhir.db + headroom), limits fitting the cx33 agents
+# (4 vCPU / 8 GB) alongside HAPI's 1Gi×2. NOTE: like postgres.storage below,
+# raising `storage` does not resize an existing PVC — expand it directly
+# (hcloud-volumes supports online expansion):
+#   kubectl -n health-stack patch pvc hades-data \
+#     -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+hades:
+  env:
+    JAVA_OPTS: "-Xmx2g"
+  storage: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi   # -Xmx2g + metaspace/native headroom
 
 # Larger Postgres volume for prod (matches patch-postgres-storage.yaml: 20Gi).
 # There is ONE shared Postgres StatefulSet holding all three databases (ehrbase,

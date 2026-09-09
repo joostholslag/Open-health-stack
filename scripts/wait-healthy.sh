@@ -8,6 +8,8 @@
 #
 # Usage: scripts/wait-healthy.sh          (or: make wait)
 #   WAIT_TIMEOUT=300 scripts/wait-healthy.sh   to override the 180s default.
+# On a FRESH hades volume (first boot / after make destroy) run with
+# WAIT_TIMEOUT=420: hades downloads + indexes its FHIR packages before serving.
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -45,5 +47,8 @@ require_token
 wait_for "ehrbase /rest/status"    200 -H "Authorization: Bearer $TOKEN" "$EDGE/ehrbase/rest/status"
 # HAPI is the one service with no compose healthcheck — this is its only gate.
 wait_for "hapi /fhir/metadata"     200 -H "Authorization: Bearer $TOKEN" "$EDGE/fhir/metadata"
+# First boot on a fresh volume bootstraps fhir.db before the port opens — can
+# take minutes (hence the WAIT_TIMEOUT=420 advice in the header).
+wait_for "hades /terminology metadata" 200 -H "Authorization: Bearer $TOKEN" "$EDGE/terminology/fhir/metadata"
 
 echo "All services answering."

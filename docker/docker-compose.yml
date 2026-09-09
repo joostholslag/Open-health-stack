@@ -2,25 +2,26 @@
 # freshehr-open-health-stack — Layer 1: local docker-compose
 # ----------------------------------------------------------------------------
 # The whole stack, self-contained: hapi (+openFHIR interceptor), ehrbase, the
-# openFHIR engine, keycloak (OIDC IdP), oauth2-proxy (edge token validator),
-# ONE shared Postgres (a database each for ehrbase/hapi/openfhir/keycloak),
-# and nginx — 7 services.
+# openFHIR engine, hades (FHIR terminology server), keycloak (OIDC IdP),
+# oauth2-proxy (edge token validator), ONE shared Postgres (a database each
+# for ehrbase/hapi/openfhir/keycloak), and nginx — 8 services.
 #
 # Everything runs in-cluster — there is no hosted-sandbox mode. The openFHIR engine
 # therefore REQUIRES the vendor license at openfhir/license/openfhir-license.json
 # (gitignored); request one at https://open-fhir.com#access.
 #
 # Auth (mirrors the k8s ingress split):
-#   /fhir      edge-validated by nginx auth_request -> oauth2-proxy
-#   /ehrbase   EHRbase validates natively (SECURITY_AUTHTYPE=OAUTH)
-#   /openfhir  engine validates natively (openfhir.protected, per-API scopes)
-#   /auth      Keycloak itself, public (token/discovery endpoints)
+#   /fhir         edge-validated by nginx auth_request -> oauth2-proxy
+#   /ehrbase      EHRbase validates natively (SECURITY_AUTHTYPE=OAUTH)
+#   /openfhir     engine validates natively (openfhir.protected, per-API scopes)
+#   /terminology  edge-validated by nginx auth_request -> oauth2-proxy
+#   /auth         Keycloak itself, public (token/discovery endpoints)
 # Get a Bearer token with `make token` (client_credentials, api-client).
 #
 # Usage:
 #   cp ../.env.example .env          # fill creds
-#   docker compose build hapi        # layers the interceptor JAR onto HAPI
-#   docker compose up -d             # all 7 services
+#   docker compose build hapi hades  # the two locally-built custom images
+#   docker compose up -d             # all 8 services
 #   make template                    # once per fresh CDR: upload the EPS OPT to EHRbase
 #   make bootstrap                   # once per fresh CDR: load openFHIR mappings +
 #                                    # ConceptMaps under tenant `freshehr` (the engine's
@@ -312,6 +313,30 @@ services:
     networks:
       - health-stack
 
+  # ── hades (FHIR terminology server: SNOMED CT / LOINC / FHIR packages) ────
+  hades:
+    build:
+      context: ./hades
+    image: ${HADES_IMAGE:-ghcr.io/freshehrteam/hades:latest}
+    container_name: freshehr-hades
+    # No Postgres wiring on purpose: hades keeps its terminology in local *.db
+    # files on the volume below (upstream hermes storage), not a SQL database.
+    # Direct host port (8084:8080) lives in docker-compose.override.yml.
+    environment:
+      JAVA_OPTS: ${HADES_JAVA_OPTS:--Xmx1g}
+    volumes:
+      - hades-data:/data          # named volume: entrypoint WRITES here
+    healthcheck:
+      # /fhir/metadata = CapabilityStatement; hades has no dedicated health
+      # endpoint. curl is installed by our Dockerfile (temurin ships none).
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/fhir/metadata >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 300s          # first boot downloads + indexes FHIR packages
+    networks:
+      - health-stack
+
   # ── nginx reverse proxy + TLS ─────────────────────────────────────────────
   nginx:
     image: nginx:1.27-alpine
@@ -326,6 +351,7 @@ services:
       - hapi
       - ehrbase
       - openfhir
+      - hades
       - keycloak
       - oauth2-proxy
     healthcheck:
@@ -341,6 +367,7 @@ services:
 
 volumes:
   db-data:
+  hades-data:
 
 networks:
   health-stack:

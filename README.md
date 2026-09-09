@@ -1,13 +1,13 @@
 # freshehr-open-health-stack
 
 A dockerized **openEHR → FHIR** health-data stack — HAPI FHIR (with the openFHIR interceptor), EHRbase, the openFHIR
-engine, Keycloak (OIDC IdP) with oauth2-proxy (edge token validator), and nginx — shipped as **three
-independently-runnable infrastructure-as-code layers**:
+engine, hades (FHIR terminology server), Keycloak (OIDC IdP) with oauth2-proxy (edge token validator), and nginx —
+shipped as **three independently-runnable infrastructure-as-code layers**:
 
 | Layer          | Path                                           | What it stands up                                                                                                    |
 |----------------|------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
 | 1 · Local dev  | [`docker/`](docker/)                           | `docker compose` — all services + 1 Postgres + nginx on your laptop                                                  |
-| 2 · Kubernetes | [`charts/health-stack/`](charts/health-stack/) | A **Helm chart** (6 workloads + ingress) with values files for `hetzner` (prod) and `dev` (kind)                     |
+| 2 · Kubernetes | [`charts/health-stack/`](charts/health-stack/) | A **Helm chart** (7 workloads + ingress) with values files for `hetzner` (prod) and `dev` (kind)                     |
 | 3 · Cloud      | [`terraform/envs/hetzner/`](terraform/)        | Terraform provisions a **Hetzner k3s** cluster, installs ingress-nginx/cert-manager/CSI, then deploys the Helm chart |
 
 > **Distributable.** The app is one Helm chart, installed from the local path
@@ -43,14 +43,16 @@ flowchart LR
     kc[Keycloak<br/>realm freshehr]
     openfhir[openFHIR engine<br/>OAuth2 resource server<br/>per-API scopes]
     ehrbase[EHRbase CDR<br/>OAuth2 resource server]
+    hades[hades terminology server<br/>SNOMED CT · LOINC · FHIR packages]
     pg[(Postgres<br/>ehrbase · hapi · openfhir · keycloak)]
 
-client -->|/fhir /ehrbase /openfhir /auth|nginx
+client -->|/fhir /ehrbase /openfhir /terminology /auth|nginx
 nginx -->|"/fhir (edge auth)"|hapi
 nginx -.->|auth_request|o2p
 o2p -.->|validate JWT|kc
 nginx -->|"/ehrbase (native auth)"|ehrbase
 nginx -->|"/openfhir (native auth)"|openfhir
+nginx -->|"/terminology (edge auth, prefix strip)"|hades
 nginx -->|/auth|kc
 hapi -->|"EPS create/query<br/>Bearer hapi-svc, scope openfhir.map"|openfhir
 hapi -->|"openEHR REST<br/>Bearer hapi-svc"|ehrbase
@@ -64,8 +66,19 @@ kc --- pg
 **Routing table** (nginx in compose; ingress-nginx via the Helm chart in k8s):
 `/fhir`→HAPI (edge-gated by oauth2-proxy), `/ehrbase`→EHRbase and
 `/openfhir`→openFHIR engine (both validate Bearer tokens natively as OAuth2
-resource servers), `/auth`→Keycloak (public token/discovery endpoints). Every
-route accepts the same `freshehr`-realm tokens — see [Auth (local)](#auth-local).
+resource servers), `/terminology`→hades (edge-gated like `/fhir` — hades has no
+app-level auth; the prefix is stripped, so hades' FHIR API appears at
+`/terminology/fhir/...`), `/auth`→Keycloak (public token/discovery endpoints).
+Every route accepts the same `freshehr`-realm tokens — see
+[Auth (local)](#auth-local).
+
+hades ([wardle/hades](https://github.com/wardle/hades)) serves FHIR R4
+terminology operations — `$lookup`, `$expand`, `$validate-code`, `$subsumes`,
+`$translate` — over local `.db` files. Out of the box it bootstraps the FHIR
+core packages (`hl7.fhir.r4.core` + `hl7.terminology.r4`, no license needed);
+SNOMED CT and LOINC are optional operator imports (see
+[Prerequisites & blockers](#prerequisites--blockers)). It is standalone for
+now — EHRbase/openFHIR/HAPI do not call it yet.
 
 **DB topology:** **one** Postgres instance with a database each for `ehrbase`,
 `hapi` and `openfhir` — see [Database topology](#database-topology) for why, and what production should do differently.
@@ -165,6 +178,16 @@ depends on an external service at runtime.
   commands. *(Alternatively, build the interceptor repo's own multi-stage Dockerfile and reference that image.)*
 - **FHIRConnect mappings + OPT** — already vendored into
   [`docker/openfhir/bootstrap/`](docker/openfhir/bootstrap/) from the hackathon repo.
+- **SNOMED CT / LOINC for hades** — *optional*. hades boots with the FHIR core
+  packages only (auto-installed, no license). To add SNOMED CT, get a free
+  license and release via [MLDS](https://mlds.ihtsdotools.org/) (IHTSDO member
+  territories) or [NHS TRUD](https://isd.digital.nhs.uk/) (UK), then import a
+  local RF2 zip with `make hades-snomed SNOMED_ZIP=/path/to/SnomedCT_...zip`
+  (k8s: the Job runbook in the
+  [chart README](charts/health-stack/README.md)). LOINC is a manual download
+  from [loinc.org](https://loinc.org/downloads/) and imports the same way
+  (`import /data/loinc.db Loinc_X.zip`). ⚠ Never bake either into a pushed
+  image — SNOMED's license precludes redistribution.
 - **Tooling** — Docker + Compose for Layer 1. For Layers 2–3 install `kubectl`,
   `helm`, `terraform`, and `hcloud`. Terraform's `k8s-apps` module installs ingress-nginx/cert-manager/CSI as Helm
   releases and then installs the health-stack chart.
@@ -178,13 +201,17 @@ cd docker
 cp ../.env.example .env          # fill creds
 
 # One-time: drop the interceptor JAR into hapi/extra-classes/ (see blockers).
-docker compose build hapi        # layers the interceptor JAR onto HAPI
+docker compose build hapi hades  # interceptor JAR onto HAPI; hades fetches its JAR
 
 # From the repo root you can instead use the Makefile:
 #   make build && make up        # (make up also generates dev TLS certs)
 
-docker compose up -d             # all 7 services (needs the openFHIR license)
+docker compose up -d             # all 8 services (needs the openFHIR license)
 docker compose ps                # wait for all to be healthy
+# First boot only: hades bootstraps its FHIR packages (fhir.db) before serving —
+# takes minutes and needs egress. From the repo root: WAIT_TIMEOUT=420 make wait.
+# Optional: import SNOMED CT (see Prerequisites) —
+#   make hades-snomed SNOMED_ZIP=/path/to/SnomedCT_RF2_release.zip
 
 # One-time per fresh CDR — upload every OPT in docker/openfhir/bootstrap to EHRbase:
 #   make template
@@ -208,6 +235,7 @@ validator. Per-route matrix (all via `https://localhost`):
 | `/ehrbase`  | EHRbase natively (`SECURITY_AUTHTYPE=OAUTH`) | 401      | 200         |
 | `/openfhir` | engine natively (`openfhir.protected`, per-API scopes) | 401 | 200 (with scope) |
 | `/openfhir/health` | public (engine `permitAll` — probes)| 200          | 200         |
+| `/terminology` | nginx `auth_request` → oauth2-proxy   | 401          | 200         |
 | `/auth`     | public (Keycloak token/discovery/console)| 200          | —           |
 
 The openFHIR engine enforces **fine-grained per-API scopes** (`opt.c/r/u/d`,
@@ -264,8 +292,9 @@ benefit.
 
 > **Dev bypass:** [`docker-compose.override.yml`](docker/docker-compose.override.yml)
 > publishes the direct container ports (8080 hapi · 8082 ehrbase · 8083
-> openfhir), skipping nginx — and therefore skipping edge auth on hapi
-> (EHRbase and openFHIR still demand a token on their direct ports; both
+> openfhir · 8084 hades), skipping nginx — and therefore skipping edge auth on
+> hapi and hades, whose direct ports are fully unauthenticated (EHRbase and
+> openFHIR still demand a token on their direct ports; both
 > validate natively). Rename the file to `.disabled` to run prod-like. Both
 > interceptor hops are authenticated via client `hapi-svc`: HAPI→EHRbase
 > ([`docker/hapi/cdrs.yml`](docker/hapi/cdrs.yml)) and HAPI→openFHIR
@@ -297,6 +326,7 @@ Verify (`TOKEN=$(make token)`):
 | HAPI     | `curl -k -H "Authorization: Bearer $TOKEN" https://localhost/fhir/metadata` → CapabilityStatement |
 | EHRbase  | `curl -k -H "Authorization: Bearer $TOKEN" https://localhost/ehrbase/rest/status` → 200   |
 | openFHIR | `curl -k -H "Authorization: Bearer $TOKEN" https://localhost/openfhir/fc/context` → 200 (`/openfhir/health` is public — permitAll) |
+| hades    | `curl -k -H "Authorization: Bearer $TOKEN" https://localhost/terminology/fhir/metadata` → CapabilityStatement (try also `'.../terminology/fhir/CodeSystem/$lookup?system=http://hl7.org/fhir/administrative-gender&code=male'`) |
 | nginx    | `curl -k https://localhost/` → route banner (no auth on the banner)                       |
 
 `make smoke` runs the full auth matrix for you (each data route must **401**
@@ -471,9 +501,9 @@ TOKEN=$(curl -sX POST https://$D/auth/realms/freshehr/protocol/openid-connect/to
 **Cluster level**
 
 ```bash
-kubectl get pods -n health-stack        # Running: postgres, ehrbase, openfhir, hapi ×2, keycloak, oauth2-proxy
+kubectl get pods -n health-stack        # Running: postgres, ehrbase, openfhir, hades, hapi ×2, keycloak, oauth2-proxy
 kubectl get certificate -n health-stack # READY=True once Let's Encrypt has issued
-kubectl get ingress -n health-stack     # FOUR: health-stack, -ehrbase, -openfhir, -auth
+kubectl get ingress -n health-stack     # FIVE: health-stack, -ehrbase, -openfhir, -terminology, -auth
 ```
 
 **Public endpoints** — every route below is served through the ingress over HTTPS.
@@ -488,21 +518,24 @@ Anything other than the expected status means that service is unhealthy:
 | openFHIR | `GET /openfhir/fc/context` | **Bearer** (app, scope `fc.r`) | `200` — EPS FHIRConnect context JSON |
 | EHRbase | `GET /ehrbase/rest/status` | **Bearer** (app) | `200` — version/status JSON |
 | EHRbase | `GET /ehrbase/rest/openehr/v1/definition/template/adl1.4` | **Bearer** (app) | `200` — list of uploaded OPTs |
+| hades | `GET /terminology/fhir/metadata` | **Bearer** (edge) | `200` — CapabilityStatement JSON |
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" -o /dev/null -w 'hapi        %{http_code}\n' https://$D/fhir/metadata
 curl -sS -H "Authorization: Bearer $TOKEN" -o /dev/null -w 'openfhir    %{http_code}\n' https://$D/openfhir/health
 curl -sS -H "Authorization: Bearer $TOKEN" -o /dev/null -w 'fc/context  %{http_code}\n' https://$D/openfhir/fc/context
 curl -sS -H "Authorization: Bearer $TOKEN" -o /dev/null -w 'ehrbase     %{http_code}\n' https://$D/ehrbase/rest/status
+curl -sS -H "Authorization: Bearer $TOKEN" -o /dev/null -w 'terminology %{http_code}\n' https://$D/terminology/fhir/metadata
 
 # The gate itself: no token must be rejected on every data route.
-# /fhir answers 302 (redirect into the oauth2-proxy sign-in flow — the
-# auth-signin annotation; set ingress.auth.signin=false for strict 401s);
-# /ehrbase and /openfhir answer 401 (native validation, no signin redirect;
-# /openfhir/health is permitAll and answers 200 bare by design).
-curl -sS -o /dev/null -w 'hapi     no-auth %{http_code} (expect 302)\n' https://$D/fhir/metadata
-curl -sS -o /dev/null -w 'openfhir no-auth %{http_code} (expect 401)\n' https://$D/openfhir/fc/context
-curl -sS -o /dev/null -w 'ehrbase  no-auth %{http_code} (expect 401)\n' https://$D/ehrbase/rest/status
+# /fhir and /terminology answer 302 (redirect into the oauth2-proxy sign-in
+# flow — the auth-signin annotation; set ingress.auth.signin=false for strict
+# 401s); /ehrbase and /openfhir answer 401 (native validation, no signin
+# redirect; /openfhir/health is permitAll and answers 200 bare by design).
+curl -sS -o /dev/null -w 'hapi        no-auth %{http_code} (expect 302)\n' https://$D/fhir/metadata
+curl -sS -o /dev/null -w 'openfhir    no-auth %{http_code} (expect 401)\n' https://$D/openfhir/fc/context
+curl -sS -o /dev/null -w 'ehrbase     no-auth %{http_code} (expect 401)\n' https://$D/ehrbase/rest/status
+curl -sS -o /dev/null -w 'terminology no-auth %{http_code} (expect 302)\n' https://$D/terminology/fhir/metadata
 ```
 
 > **One token, two enforcement layers — and they never stack.** `/fhir` is gated
@@ -519,13 +552,14 @@ curl -sS -o /dev/null -w 'ehrbase  no-auth %{http_code} (expect 401)\n' https://
 > and add failure modes for no security gain (mirrors the compose nginx split).
 >
 > Because `auth-url` is an **Ingress-level** annotation (not per-path), routes with
-> different auth requirements need different Ingress objects. The chart renders four:
+> different auth requirements need different Ingress objects. The chart renders five:
 >
 > | Ingress | Path | Backend | Edge auth |
 > |---|---|---|---|
 > | `health-stack` | `/fhir` | HAPI | ✅ Bearer via oauth2-proxy |
 > | `health-stack-ehrbase` | `/ehrbase` | EHRbase | ❌ (native validation) |
 > | `health-stack-openfhir` | `/openfhir` | openFHIR | ❌ (native validation, per-scope) + rewrite |
+> | `health-stack-terminology` | `/terminology` | hades | ✅ Bearer via oauth2-proxy + rewrite |
 > | `health-stack-auth` | `/auth`, `/oauth2` | Keycloak / oauth2-proxy | public |
 >
 > **Why HAPI needs edge auth at all:** it doesn't authenticate on its own.
@@ -697,10 +731,19 @@ Two kinds of claims appear in this README: **verified** = actually run and obser
   composition queryable in EHRbase via AQL — `make smoke` runs the auth matrix), the
   full OAuth2 architecture on both layers, and the Terraform deployment on a live
   Hetzner k3s cluster (3 nodes + LB, DNS + Let's Encrypt TLS, in-place
-  `helm upgrade`s via `terraform apply`).
+  `helm upgrade`s via `terraform apply`). For hades: the image build, the
+  first-boot fhir.db bootstrap, and `$lookup`/`$expand` against a running
+  container (standalone, direct port).
 - **Authored only:** the CI image-build workflow (never run in CI; currently
-  disabled) and the Helm chart on kind/minikube (`helm lint` + `helm template`
-  pass; never installed on a local cluster).
+  disabled), the Helm chart on kind/minikube (`helm lint` + `helm template`
+  pass; never installed on a local cluster), the hades `/terminology` edge
+  route + chart objects (rendered, not deployed), the SNOMED/LOINC import
+  paths (`make hades-snomed`, the k8s Job runbook — no licensed release to
+  test with), and one caveat observed standalone: hades' CapabilityStatement
+  self-reports its base URL from the request Host header, so behind the
+  prefix-stripping proxy it reads `https://<host>/fhir` instead of
+  `/terminology/fhir` — cosmetic, terminology operations return inline
+  results.
 - **Identity scope:** machine clients only at the stack level. Human login lives in
   the companion [freshehr-nictiz-ui](https://github.com/freshehrteam/Nictiz-ui)
   EMR, which registers its own clients and a demo user against the realm at install
@@ -711,8 +754,8 @@ Two kinds of claims appear in this README: **verified** = actually run and obser
 ```
 freshehr-open-health-stack/
 ├── README.md · Makefile · .env.example · .gitignore
-├── .github/workflows/          # build-images (HAPI) + helm-lint (currently disabled)
-├── docker/                     # Layer 1 — compose, Dockerfile, configs, init SQL, nginx, keycloak realm
+├── .github/workflows/          # build-images (HAPI, EPS mappings, hades) + helm-lint
+├── docker/                     # Layer 1 — compose, Dockerfiles (hapi, hades), configs, init SQL, nginx, keycloak realm
 ├── charts/health-stack/        # Layer 2 — Helm chart + values (hetzner/dev)
 └── terraform/
     ├── modules/                # hcloud-network · hcloud-cluster · hcloud-lb · k8s-apps

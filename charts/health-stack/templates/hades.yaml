@@ -1,0 +1,106 @@
+{{- /*
+hades — FHIR terminology server (SNOMED CT / LOINC / FHIR packages).
+
+Deliberate deviations from the openfhir.yaml shape:
+  - PVC instead of Postgres wiring: hades keeps its terminology in local *.db
+    files (upstream hermes storage), so there is no waitForPostgres
+    initContainer and no init-db.sql entry.
+  - strategy Recreate: the PVC is ReadWriteOnce — the old pod must release it
+    before a replacement can mount it. (replicas must stay 1 for the same
+    reason.)
+  - No configChecksum annotation: nothing config-shaped is mounted, so the
+    checksum would only cause pointless pod rolls on unrelated config edits.
+  - startupProbe instead of a huge initialDelaySeconds: first boot on an empty
+    PVC downloads + indexes FHIR packages before the port opens (entrypoint
+    bootstrap); once serving, readiness/liveness stay tight.
+*/ -}}
+{{- if .Values.hades.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hades-data
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hades") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.storage.className }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.hades.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hades
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hades") | nindent 4 }}
+spec:
+  replicas: {{ .Values.hades.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "hades") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hades") | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      containers:
+        - name: hades
+          image: {{ include "health-stack.image" (dict "image" .Values.hades.image "fallback" .Values.images.hades) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.hades.image "fallback" .Values.images.hades) }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: JAVA_OPTS
+              value: {{ .Values.hades.env.JAVA_OPTS | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          startupProbe:
+            httpGet:
+              path: {{ .Values.hades.readiness.path }}
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: {{ .Values.hades.startupFailureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.hades.readiness.path }}
+              port: 8080
+            periodSeconds: {{ .Values.hades.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.hades.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.hades.liveness.path }}
+              port: 8080
+            periodSeconds: {{ .Values.hades.liveness.periodSeconds }}
+          {{- with .Values.hades.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hades-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hades
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hades") | nindent 4 }}
+spec:
+  type: {{ .Values.hades.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "hades") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.hades.service.port }}
+      targetPort: 8080
+{{- end }}

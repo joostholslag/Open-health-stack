@@ -1,8 +1,10 @@
 # Dev overrides — auto-merged by `docker compose` when present.
 # Adds JVM remote-debug ports and the DIRECT-PORT DEV BYPASS: host ports that
-# reach hapi/ehrbase/openfhir straight past nginx (and so past the oauth2-proxy
-# edge auth on /fhir — EHRbase and openFHIR still demand a Bearer token even
-# on their direct ports, since both validate natively). Delete/rename this file
+# reach hapi/ehrbase/openfhir/hades straight past nginx (and so past the
+# oauth2-proxy edge auth on /fhir and /terminology — EHRbase and openFHIR
+# still demand a Bearer token even on their direct ports, since both validate
+# natively; hapi and hades have NO native auth, so their direct ports are
+# fully unauthenticated). Delete/rename this file
 # (e.g. to docker-compose.override.yml.disabled) to run "prod-like": nginx-only
 # routing, every data route authenticated.
 #
@@ -20,6 +22,10 @@ services:
   ehrbase:
     ports:
       - "8082:8080"          # dev bypass — still OAuth-protected (native validation)
+
+  hades:
+    ports:
+      - "8084:8080"          # dev bypass — unauthenticated /fhir/... terminology API, nginx skipped
 
   # Expose the openFHIR engine's debug/extra port too when the profile is up.
   openfhir:
