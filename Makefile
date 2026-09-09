@@ -17,7 +17,11 @@ IMAGE_TAG ?= latest
 
 # Extra args for `docker compose`.
 PROFILE ?=
-COMPOSE := docker compose -f $(DOCKER_DIR)/docker-compose.yml $(PROFILE)
+# An explicit -f disables compose's automatic override merging, so include the
+# dev override ourselves when it exists (rename it to .disabled to run
+# prod-like — same contract as running `docker compose` from docker/ directly).
+OVERRIDE := $(wildcard $(DOCKER_DIR)/docker-compose.override.yml)
+COMPOSE := docker compose -f $(DOCKER_DIR)/docker-compose.yml $(if $(OVERRIDE),-f $(OVERRIDE)) $(PROFILE)
 
 .DEFAULT_GOAL := help
 
@@ -147,8 +151,10 @@ bootstrap: ## Make openFHIR re-scan its bootstrap dir (no restart needed)
 	@# invisible to freshehr callers — this target is the canonical loading path.
 	@TOKEN=$$($(MAKE) --no-print-directory token); \
 	[ -n "$$TOKEN" ] || { echo "ERROR: could not fetch a token from Keycloak (is the stack up?)"; exit 1; }; \
-	curl -sSk -H "Authorization: Bearer $$TOKEN" -X POST 'https://localhost/openfhir/$$bootstrap' \
-		-o /dev/null -w "  bootstrap -> HTTP %{http_code}\n"
+	code=$$(curl -sSk -H "Authorization: Bearer $$TOKEN" -X POST 'https://localhost/openfhir/$$bootstrap' \
+		-o /dev/null -w '%{http_code}'); \
+	echo "  bootstrap -> HTTP $$code"; \
+	case "$$code" in 2*) ;; *) echo "ERROR: \$$bootstrap failed (HTTP $$code)"; exit 1;; esac
 	@$(MAKE) --no-print-directory conceptmaps
 
 .PHONY: conceptmaps
@@ -164,6 +170,7 @@ conceptmaps: ## Load the *_conceptmap.json terminology maps into openFHIR
 	@# to look like a broken bootstrap.
 	@TOKEN=$$($(MAKE) --no-print-directory token); \
 	[ -n "$$TOKEN" ] || { echo "ERROR: could not fetch a token from Keycloak (is the stack up?)"; exit 1; }; \
+	fail=0; \
 	for cm in $$(find "$(DOCKER_DIR)/openfhir/bootstrap" -name '*_conceptmap.json' | sort); do \
 		body=$$(curl -sSk -X POST https://localhost/openfhir/terminology/fhir/ConceptMap \
 			-H "Authorization: Bearer $$TOKEN" \
@@ -174,11 +181,12 @@ conceptmaps: ## Load the *_conceptmap.json terminology maps into openFHIR
 			2*) status="loaded";; \
 			*) case "$$body" in \
 				*"already exists"*) status="already loaded";; \
-				*) status="FAILED (HTTP $$code)";; \
+				*) status="FAILED (HTTP $$code)"; fail=1;; \
 			esac;; \
 		esac; \
 		printf '  %-46s %s\n' "$$(basename "$$cm")" "$$status"; \
-	done
+	done; \
+	exit $$fail
 
 .PHONY: smoke
 smoke: ## Auth matrix against the running stack: data routes must 401 bare / 200 with a Bearer token; health + discovery stay public
@@ -198,6 +206,18 @@ smoke: ## Auth matrix against the running stack: data routes must 401 bare / 200
 	[ "$$disc" = 200 ] && verdict=OK || { verdict=FAIL; fail=1; }; \
 	printf '  %-22s %s (want 200)  %s\n' "OIDC discovery" "$$disc" "$$verdict"; \
 	exit $$fail
+
+.PHONY: wait
+wait: ## Block until every service answers (incl. HAPI, which has no compose healthcheck)
+	@bash scripts/wait-healthy.sh
+
+.PHONY: verify
+verify: ## Data-plane test suite: templates, mappings, EPS ingest, AQL, tofhir content
+	@bash scripts/verify.sh
+
+.PHONY: versions
+versions: ## Version drift report: declared pins (compose/Dockerfile/chart) vs running
+	@bash scripts/versions.sh
 
 ## ── Layer 2: Kubernetes (Helm chart) ─────────────────────────────────────────
 ## Set ENV=hetzner|dev (default hetzner). Local iteration uses values-dev.
