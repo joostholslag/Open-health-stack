@@ -171,11 +171,12 @@ depends on an external service at runtime.
 ## Prerequisites & blockers
 
 - **openFHIR license** — **required**; the engine will not start without it.
-- **HAPI interceptor JAR** — build input. Clone
-  [`openfhir-hapi-interceptor`](https://github.com/openFHIR/openfhir-hapi-interceptor), run
-  `mvn clean package -DskipTests`, and drop `target/*.jar` into
-  [`docker/hapi/extra-classes/`](docker/hapi/extra-classes/) (gitignored). See that directory's `.gitkeep` for the exact
-  commands. *(Alternatively, build the interceptor repo's own multi-stage Dockerfile and reference that image.)*
+- **HAPI interceptor JAR** — no longer a manual prerequisite. The hapi
+  Dockerfile fetches it at build time from the pinned
+  [`openfhir-hapi-interceptor`](https://github.com/openFHIR/openfhir-hapi-interceptor)
+  GitHub **release asset** (`ARG INTERCEPTOR_VERSION`; releases ≥ 2.0.0 publish
+  the `.jar` asset — older tags have none and fail the build by design). To
+  change it, bump that ARG — see [Upgrading the stack](#upgrading-the-stack).
 - **FHIRConnect mappings + OPT** — already vendored into
   [`docker/openfhir/bootstrap/`](docker/openfhir/bootstrap/) from the hackathon repo.
 - **SNOMED CT / LOINC for hades** — *optional*. hades boots with the FHIR core
@@ -200,8 +201,8 @@ depends on an external service at runtime.
 cd docker
 cp ../.env.example .env          # fill creds
 
-# One-time: drop the interceptor JAR into hapi/extra-classes/ (see blockers).
-docker compose build hapi hades  # interceptor JAR onto HAPI; hades fetches its JAR
+docker compose build hapi hades  # both fetch their JARs at build time (openFHIR
+                                 # interceptor + hades) from pinned release assets
 
 # From the repo root you can instead use the Makefile:
 #   make build && make up        # (make up also generates dev TLS certs)
@@ -721,6 +722,116 @@ To add another cloud: write a `<cloud>-cluster` module that writes a kubeconfig 
 `node_label_selector` + endpoint, add a root under
 `terraform/envs/<cloud>`, and add a values file setting `storage.className`. The chart and `k8s-apps`' add-on half are
 already provider-neutral.
+
+## Upgrading the stack
+
+Bumping any component version and getting it **live on Hetzner** is a chain of
+steps — skipping one silently leaves the old version running. Do them in order.
+
+Two classes of image behave differently on `terraform apply`:
+
+- **Public-registry images** (ehrbase, openfhir, keycloak, oauth2-proxy,
+  postgres) are pulled straight from Docker Hub / quay by tag. Bumping their
+  tag in the chart is enough — `terraform apply` pulls the new version.
+- **Team images** (`ghcr.io/freshehrteam/{hapi-openfhir, fhirconnect-eps-mappings,
+  hades}`) must be **built and pushed to GHCR first**, then referenced by an
+  explicit tag. A `terraform apply` that points at a tag GHCR doesn't have yet
+  leaves the pod unable to pull.
+
+### 1 · Bump the versions (use the skill)
+
+Run the [`/upgrade-stack`](.claude/skills/upgrade-stack/SKILL.md) Claude skill.
+It discovers the latest releases, applies the changelog checklist, pins **both**
+layers (compose + `charts/health-stack/values.yaml`), bumps
+`charts/health-stack/Chart.yaml` `version:`, and verifies against the compose
+stack (`make verify`) + UI (`npm run stack:verify`) + chart gates. This is the
+per-cycle source of truth; the rest of this section is what the skill hands off
+to for the **live cluster**.
+
+After it runs, `make versions` should show no compose↔chart drift.
+
+### 2 · Publish the team images to GHCR
+
+The chart pins the team images to a tag that **matches `Chart.yaml` version**
+(e.g. chart `0.4.0` → image tag `0.4.0`). Produce that tag:
+
+```bash
+# Preferred: push a git tag; CI (build-images.yml, type=semver) builds & pushes
+#   ghcr.io/freshehrteam/hapi-openfhir:0.4.0  (+ eps-mappings, hades)
+git tag v0.4.0 && git push origin v0.4.0
+
+# Or manually (needs `docker login ghcr.io` with a write:packages PAT):
+make images-push IMAGE_TAG=0.4.0
+```
+
+> **First-push gotcha:** GHCR creates packages **private**. Until you flip each
+> to Public (org → Packages → package → settings), the cluster pull fails with
+> "pull access denied" even though CI is green. Alternatively configure an image
+> pull secret.
+
+CI builds the hapi image by **fetching** the interceptor asset pinned in
+`docker/hapi/Dockerfile` (`ARG INTERCEPTOR_VERSION`) — there is no source build.
+Bumping the interceptor is just that ARG; the skill covers it.
+
+### 3 · Pin the tag the cluster actually deploys
+
+`terraform apply` renders the chart with **`values-hetzner.yaml` layered on top
+of `values.yaml`** — the hetzner file's `images:` block **wins**. Bump the tag
+**there** (not only in the base `values.yaml`):
+
+```yaml
+# charts/health-stack/values-hetzner.yaml
+images:
+  hapi:        { repository: ghcr.io/freshehrteam/hapi-openfhir,            tag: "0.4.0" }
+  ipsMappings: { repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings, tag: "0.4.0" }
+  hades:       { repository: ghcr.io/freshehrteam/hades,                    tag: "0.4.0" }
+```
+
+Editing only the base `values.yaml` is a **silent no-op on Hetzner** — the
+override still points at the old tag. Keep both in step, both == `Chart.yaml`
+version.
+
+> `pullPolicy: IfNotPresent` is fine here because these are **immutable, explicit
+> tags** — a new tag is a new pull. (It would be a trap with `latest`, which is
+> why the chart no longer uses it.)
+
+### 4 · `terraform apply`
+
+```bash
+cd terraform/envs/hetzner
+export KUBECONFIG=$PWD/kubeconfig
+terraform apply                                    # make tf-apply
+kubectl get pods -n health-stack -w                # Ctrl-C when all Running
+```
+
+Terraform's helm provider **only re-renders when `Chart.yaml` `version:`
+changed** — the skill bumps it, so an unchanged version silently reports "No
+changes" even with new tags. If apply reports no changes but you expected some,
+that bump was missed.
+
+### 5 · Confirm what actually landed
+
+```bash
+kubectl get pods -n health-stack \
+  -o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image
+```
+
+Every team-image pod should show the new tag (e.g. `:0.4.0`), and public images
+their new versions. A pod stuck `ImagePullBackOff` on a team image = step 2
+missing (tag not pushed, or package still private).
+
+### Checklist (what people miss)
+
+- [ ] Ran `/upgrade-stack`; `make verify` + UI `stack:verify` green.
+- [ ] `Chart.yaml` `version:` bumped (else terraform no-ops).
+- [ ] Team-image tag **built & pushed to GHCR** and package is **public**.
+- [ ] Tag bumped in **`values-hetzner.yaml`** (the prod override), not just base.
+- [ ] `EHRbase MANAGEMENT_ENDPOINT_HEALTH_*` property matches the image
+      generation in **both** layers (skill checklist — wrong one crashes EHRbase).
+- [ ] Realm JSON edits (if any) applied via the live-cluster realm runbook in the
+      [chart README](charts/health-stack/README.md) — `--import-realm` never
+      updates an existing realm.
+- [ ] `terraform apply` ran; `kubectl get pods` shows the new image tags.
 
 ## Verification status
 

@@ -41,10 +41,10 @@ Compose and chart MUST declare the same tag for shared components;
 | nginx            | `docker/docker-compose.yml:342`    | — (k8s uses ingress-nginx)           | |
 | hapi (upstream)  | `docker/hapi/Dockerfile:25` (`ARG HAPI_BASE`) | —                         | the real HAPI pin; compose builds locally |
 | hapi (interceptor) | `docker/hapi/Dockerfile:22` (`ARG INTERCEPTOR_VERSION`) | — | openFHIR interceptor; fetched at build from the GitHub release asset (`releases ≥ 2.0.0` ship the jar; older tags have none → build fails). No sha256 asset published upstream. |
-| hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:93` | team image on `ghcr.io/freshehrteam` (CI `build-images.yml`); deploy with explicit `IMAGE_TAG=` pushes (`make images-push`) |
-| eps-mappings     | —                                  | `charts/health-stack/values.yaml:101`| team image on `ghcr.io/freshehrteam`; same `IMAGE_TAG=` rule |
+| hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:92` + `values-hetzner.yaml:49` (prod override — the tag terraform actually deploys) | team image on `ghcr.io/freshehrteam` (CI `build-images.yml`); chart pins an explicit tag matching `Chart.yaml version` — produced by CI's `type=semver` on the `v<version>` git tag (or `make images-push IMAGE_TAG=<version>`). **`values-hetzner.yaml` overrides win for prod — bump the tag THERE too.** Publish the tag before `terraform apply`. |
+| eps-mappings     | —                                  | `charts/health-stack/values.yaml:103` + `values-hetzner.yaml:52` | team image on `ghcr.io/freshehrteam`; same explicit-tag rule as hapi (pushed) |
 | hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
-| hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:108`| team image `ghcr.io/freshehrteam/hades`; same `IMAGE_TAG=` rule as the other team images |
+| hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:110` + `values-hetzner.yaml:55` | team image `ghcr.io/freshehrteam/hades`; same explicit-tag rule as hapi (pushed) |
 
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
@@ -120,7 +120,5 @@ clean start, `make verify`, UI `stack:verify`, report.
 
 - Pin the four unpinned terraform add-on Helm charts
   (`terraform/modules/k8s-apps/main.tf`).
-- Pin the chart's `hapi`/`eps-mappings` tags to pushed `IMAGE_TAG=` versions
-  instead of `latest`.
 - Stack e2e stays local-only (CI builds images and lints the chart, but the
   full compose e2e needs the gitignored license/JAR).
