@@ -16,7 +16,11 @@
 #
 # Alternative: build the interceptor repo's own multi-stage Dockerfile directly
 # and reference that image instead of this one.
-FROM hapiproject/hapi:v8.2.0-2
+
+# The upstream HAPI pin. The interceptor JAR is compiled against this HAPI
+# generation — a major base bump means recompiling the JAR too.
+ARG HAPI_BASE=hapiproject/hapi:v8.2.0-2
+FROM ${HAPI_BASE}
 
 # Layer the pre-built interceptor JAR onto the HAPI classpath.
 COPY extra-classes/ /app/extra-classes/

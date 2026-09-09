@@ -70,7 +70,9 @@ services:
 
   # ── EHRbase (openEHR CDR) ─────────────────────────────────────────────────
   ehrbase:
-    image: ehrbase/ehrbase
+    # Pinned, not :latest — matches the Helm chart (values.yaml ehrbase.image.tag);
+    # the MANAGEMENT_* env below is version-coupled to this tag.
+    image: ehrbase/ehrbase:2.35.1
     container_name: freshehr-ehrbase
     # Direct host port (8082:8080) lives in docker-compose.override.yml.
     environment:
@@ -85,11 +87,15 @@ services:
       SECURITY_OAUTH2ADMINROLE: ADMIN
       # In OAUTH mode /rest/status is no longer public, so the healthcheck moves
       # to the Spring management health endpoint — these two make it public.
-      # HEALTH_ENABLED, not HEALTH_ACCESS: EHRbase's bundled application.yml
-      # already sets management.endpoint.health.enabled, and Spring treats
-      # enabled+access as mutually exclusive (startup failure). WEB_ACCESS is an
+      # ⚠ VERSION-COUPLED to the pinned image above (must match the chart's
+      # ehrbase env): EHRbase ≥2.35 sets management.endpoint.health.ACCESS in
+      # its bundled config (override the same property), while ≤2.28 sets
+      # health.ENABLED — and Spring treats the enabled+access PAIR as mutually
+      # exclusive, so using the wrong one for the image generation crashes
+      # EHRbase at startup. If you change the image tag, check which property
+      # that version's bundled application.yml uses. WEB_ACCESS is an
       # EHRbase-custom enum (ADMIN_ONLY|PRIVATE|PUBLIC).
-      MANAGEMENT_ENDPOINT_HEALTH_ENABLED: "true"
+      MANAGEMENT_ENDPOINT_HEALTH_ACCESS: READ_ONLY
       MANAGEMENT_ENDPOINTS_WEB_ACCESS: PUBLIC
       DB_URL: jdbc:postgresql://postgres:5432/ehrbase
       DB_USER: ${EHRBASE_DB_USER:-ehrbase_restricted}
@@ -264,7 +270,9 @@ services:
     # (openfhir.db.type=postgres) ships only in the enterprise engine. The community
     # openfhir image is Mongo-only, so it fails with "No qualifying bean of type
     # FhirConnectModelRepository" under a postgres config.
-    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:latest}
+    # Pinned (matches the Helm chart openfhir.image.tag); OPENFHIR_IMAGE still
+    # overrides for local engine builds.
+    image: ${OPENFHIR_IMAGE:-openfhir/openfhir-enterprise:3.0.0}
     container_name: freshehr-openfhir
     # Direct host port (8083:8080) lives in docker-compose.override.yml.
     environment:

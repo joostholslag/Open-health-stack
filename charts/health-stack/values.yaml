@@ -245,7 +245,9 @@ openfhir:
   # FhirConnectModelRepository" under a postgres config.
   image:
     repository: openfhir/openfhir-enterprise
-    tag: latest
+    # Pinned — must match the compose default (docker/docker-compose.yml
+    # OPENFHIR_IMAGE fallback).
+    tag: 3.0.0
     pullPolicy: IfNotPresent
   # EPS mappings initContainer image. Empty = fall back to .Values.images.ipsMappings.
   mappingsImage: {}
