@@ -46,11 +46,11 @@ clusterIssuer:
 # Pin production image tags (CI pushes immutable tags — replace :latest).
 images:
   hapi:
-    repository: openfhir/hapi-openfhir
-    tag: v0.1.0
+    repository: ghcr.io/freshehrteam/hapi-openfhir
+    tag: "0.1.0"
   ipsMappings:
-    repository: openfhir/fhirconnect-eps-mappings
-    tag: v0.1.0
+    repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
+    tag: "0.1.0"
 
 # Production HAPI sizing (matches patch-hapi-resources.yaml) + point HAPI at the
 # in-cluster openFHIR engine (local mode).

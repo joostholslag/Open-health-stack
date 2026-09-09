@@ -89,7 +89,7 @@ clusterIssuer:
 images:
   # HAPI FHIR + the openFHIR interceptor JAR (built from docker/hapi/Dockerfile).
   hapi:
-    repository: openfhir/hapi-openfhir
+    repository: ghcr.io/freshehrteam/hapi-openfhir
     tag: latest
     pullPolicy: IfNotPresent
   # Data-only image: the EPS FHIRConnect mappings + OPT, copied into the openFHIR
@@ -97,7 +97,7 @@ images:
   # The key keeps its historical `ipsMappings` name so existing overrides survive;
   # the repository it points at is the EPS bundle.
   ipsMappings:
-    repository: openfhir/fhirconnect-eps-mappings
+    repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
     tag: latest
     pullPolicy: IfNotPresent
 imagePullSecrets: []

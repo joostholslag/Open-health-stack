@@ -38,8 +38,8 @@ Compose and chart MUST declare the same tag for shared components;
 | openfhir         | `docker/docker-compose.yml:275`    | `charts/health-stack/values.yaml:250`| must stay `openfhir-enterprise` |
 | nginx            | `docker/docker-compose.yml:317`    | — (k8s uses ingress-nginx)           | |
 | hapi (upstream)  | `docker/hapi/Dockerfile:22` (`ARG HAPI_BASE`) | —                         | the real HAPI pin; compose builds locally |
-| hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:93` | team image; deploy with explicit `IMAGE_TAG=` pushes (`make images-push`) |
-| eps-mappings     | —                                  | `charts/health-stack/values.yaml:101`| team image; same `IMAGE_TAG=` rule |
+| hapi (pushed)    | —                                  | `charts/health-stack/values.yaml:93` | team image on `ghcr.io/freshehrteam` (CI `build-images.yml`); deploy with explicit `IMAGE_TAG=` pushes (`make images-push`) |
+| eps-mappings     | —                                  | `charts/health-stack/values.yaml:101`| team image on `ghcr.io/freshehrteam`; same `IMAGE_TAG=` rule |
 
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
@@ -109,6 +109,5 @@ clean start, `make verify`, UI `stack:verify`, report.
   (`terraform/modules/k8s-apps/main.tf`).
 - Pin the chart's `hapi`/`eps-mappings` tags to pushed `IMAGE_TAG=` versions
   instead of `latest`.
-- Revive the commented-out CI workflows under the `freshehrteam` org (unit
-  tests + helm-lint on PRs; stack e2e stays local — needs the gitignored
-  license/JAR).
+- Stack e2e stays local-only (CI builds images and lints the chart, but the
+  full compose e2e needs the gitignored license/JAR).

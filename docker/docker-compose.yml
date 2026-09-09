@@ -37,7 +37,7 @@ services:
   hapi:
     build:
       context: ./hapi
-    image: ${HAPI_IMAGE:-openfhir/hapi-openfhir:latest}
+    image: ${HAPI_IMAGE:-ghcr.io/freshehrteam/hapi-openfhir:latest}
     container_name: freshehr-hapi
     # No host port here: the direct-port dev bypass (8080:8080) lives in
     # docker-compose.override.yml. Authenticated access goes via nginx /fhir.

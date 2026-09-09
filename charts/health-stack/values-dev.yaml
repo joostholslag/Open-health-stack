@@ -25,11 +25,11 @@ ingress:
 # Locally-built images (see `make build`); `local` tag, pulled from the node.
 images:
   hapi:
-    repository: openfhir/hapi-openfhir
+    repository: ghcr.io/freshehrteam/hapi-openfhir
     tag: local
     pullPolicy: IfNotPresent
   ipsMappings:
-    repository: openfhir/fhirconnect-eps-mappings
+    repository: ghcr.io/freshehrteam/fhirconnect-eps-mappings
     tag: local
     pullPolicy: IfNotPresent
 

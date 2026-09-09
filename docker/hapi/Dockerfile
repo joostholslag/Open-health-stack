@@ -1,4 +1,4 @@
-# openfhir/hapi-openfhir = stock HAPI FHIR + the openFHIR interceptor JAR.
+# ghcr.io/freshehrteam/hapi-openfhir = stock HAPI FHIR + the openFHIR interceptor JAR.
 #
 # That is the entire delta over hapiproject/hapi: the interceptor on the classpath
 # and the IPS operation enabled. Nothing else is customised.

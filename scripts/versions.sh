@@ -77,12 +77,13 @@ row oauth2-proxy  "oauth2-proxy/oauth2-proxy"    "quay.io/oauth2-proxy/oauth2-pr
 
 # Components that exist in only one layer — informational, no match check:
 # - hapi: compose builds locally FROM the Dockerfile pin; the chart pulls the
-#   team's pushed openfhir/hapi-openfhir image (push with an explicit IMAGE_TAG=).
+#   team's pushed ghcr.io/freshehrteam/hapi-openfhir image (push with an explicit
+#   IMAGE_TAG=).
 # - nginx: compose-only; on k8s its job is done by ingress-nginx.
 hapi_base=$(tr -d '\r' < "$HAPI_DOCKERFILE" | sed -n 's/^ARG HAPI_BASE=hapiproject\/hapi:\(.*\)$/\1/p')
-hapi_run=""; [ "$STACK_UP" = 1 ] && hapi_run=$(running_tag "openfhir/hapi-openfhir")
+hapi_run=""; [ "$STACK_UP" = 1 ] && hapi_run=$(running_tag "ghcr.io/freshehrteam/hapi-openfhir")
 printf "$FMT" "hapi (base)"  "${hapi_base:-?}" "(local build)"        "${hapi_run:--}" "info"
-printf "$FMT" "hapi (chart)" "-"               "$(chart_tag openfhir/hapi-openfhir)" "-" "info"
+printf "$FMT" "hapi (chart)" "-"               "$(chart_tag ghcr.io/freshehrteam/hapi-openfhir)" "-" "info"
 nginx_run=""; [ "$STACK_UP" = 1 ] && nginx_run=$(running_tag "nginx")
 printf "$FMT" "nginx"        "$(compose_tag nginx)" "(ingress-nginx)" "${nginx_run:--}" "info"
 

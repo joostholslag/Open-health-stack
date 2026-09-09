@@ -1,4 +1,4 @@
-# openfhir/fhirconnect-ips-mappings — the FHIRConnect mapping bundle.
+# ghcr.io/freshehrteam/fhirconnect-eps-mappings — the FHIRConnect mapping bundle.
 #
 # NOT an openFHIR engine build. This is a data-only image: a versioned bundle of the
 # FHIRConnect mapping YAMLs + EVERY operational template (OPT) under /bootstrap.
@@ -18,6 +18,6 @@
 #
 # Build + push (see the Makefile targets `images` / `images-push`):
 #   docker build -f docker/openfhir/bootstrap.Dockerfile \
-#     -t openfhir/fhirconnect-ips-mappings:<tag> docker/openfhir
+#     -t ghcr.io/freshehrteam/fhirconnect-eps-mappings:<tag> docker/openfhir
 FROM busybox:1.36
 COPY bootstrap/ /bootstrap/

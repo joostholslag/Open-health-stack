@@ -11,8 +11,8 @@ ENV ?= hetzner
 # Only one cloud is supported (Hetzner k3s); see terraform/envs/.
 TF_ENV := terraform/envs/hetzner
 
-# Docker Hub org + tag for the two custom images (see `make images`).
-IMAGE_ORG ?= openfhir
+# GHCR namespace + tag for the two custom images (see `make images`).
+IMAGE_ORG ?= ghcr.io/freshehrteam
 IMAGE_TAG ?= latest
 
 # Extra args for `docker compose`.
@@ -78,7 +78,7 @@ images: ## Build both custom images (IMAGE_ORG/IMAGE_TAG override the defaults)
 	@echo "Built: $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)  $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)"
 
 .PHONY: images-push
-images-push: images ## Build then push both images to Docker Hub (needs `docker login`)
+images-push: images ## Build then push both images to GHCR (needs `docker login ghcr.io` with a PAT that has write:packages)
 	docker push $(IMAGE_ORG)/hapi-openfhir:$(IMAGE_TAG)
 	docker push $(IMAGE_ORG)/fhirconnect-eps-mappings:$(IMAGE_TAG)
 

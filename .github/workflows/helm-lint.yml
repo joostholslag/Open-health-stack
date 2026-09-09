@@ -1,85 +1,81 @@
-# DISABLED before repository transfer: this workflow references the previous
-# publisher's registry org and repo secrets and would fail in a new org.
-# Re-enable by uncommenting and updating IMAGE_ORG / secrets / hostnames.
+# Validate the health-stack chart on every change.
 #
-# # Validate the health-stack chart on every change.
-# #
-# # This does NOT publish the chart anywhere, deliberately. Terraform installs it
-# # from its path in this repo (modules/k8s-apps sets chart_path to
-# # ../../../charts/health-stack), so nothing ever pulls it from a registry.
-# #
-# # Pushing a packaged copy to GHCR would create a second artifact that nothing
-# # installs from, and that can silently disagree with the working tree — a
-# # registry claiming to hold "0.1.0" while a different 0.1.0 is what Terraform
-# # actually applied. If this chart is ever meant to be consumed by someone who
-# # has not cloned the repo, add a publish job back AND point
-# # `helm_release.chart` at `oci://...` at a pinned version, so the published
-# # artifact and the deployed one are the same thing by construction.
-# name: helm-lint
+# This does NOT publish the chart anywhere, deliberately. Terraform installs it
+# from its path in this repo (modules/k8s-apps sets chart_path to
+# ../../../charts/health-stack), so nothing ever pulls it from a registry.
 #
-# on:
-#   push:
-#     branches: [main]
-#     paths:
-#       - "charts/health-stack/**"
-#       - ".github/workflows/helm-lint.yml"
-#   pull_request:
-#     paths:
-#       - "charts/health-stack/**"
-#       - ".github/workflows/helm-lint.yml"
-#   workflow_dispatch:
-#
-# env:
-#   CHART_DIR: charts/health-stack
-#
-# jobs:
-#   # ── Lint + render every values file (catches template regressions) ──────────
-#   lint:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: azure/setup-helm@v4
-#         with:
-#           version: v3.16.2
-#
-#       - name: helm lint (default + each values file)
-#         run: |
-#           set -e
-#           # Same dummy secrets as the render step below — without them lint emits
-#           # "missing required values" warnings per invocation, which is
-#           # noise that would hide a real one. See that step for why they exist.
-#           DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
-#           helm lint "$CHART_DIR" $DUMMY
-#           for f in hetzner dev; do
-#             echo "── lint values-$f ──"
-#             helm lint "$CHART_DIR" $DUMMY -f "$CHART_DIR/values-$f.yaml"
-#           done
-#
-#       - name: helm template render-check
-#         run: |
-#           set -e
-#           # DUMMY keycloak secrets are required for any render to succeed:
-#           # configmaps.yaml renders cdrs.yml (hapi-svc client secret) and
-#           # keycloak.yaml renders the realm import (all three client secrets),
-#           # each behind `required`; values-hetzner.yaml additionally blanks the
-#           # dev defaults so a bare hetzner render fails loudly. Terraform always
-#           # supplies the real values (set_sensitive in modules/k8s-apps), so
-#           # deploys are unaffected — but a bare `helm template` has nothing to
-#           # substitute and fails outright.
-#           #
-#           # The values are meaningless and never leave this runner; they exist
-#           # so the templates can be exercised at all.
-#           DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
-#
-#           # Render must produce valid, non-empty YAML for both openFHIR modes and
-#           # for each per-cloud values file.
-#           render() {
-#             echo "── template $* ──"
-#             helm template health-stack "$CHART_DIR" -n health-stack $DUMMY "$@" \
-#               | python3 -c 'import sys,yaml; d=[x for x in yaml.safe_load_all(sys.stdin) if x]; assert d, "empty render"; print(f"  {len(d)} objects OK")'
-#           }
-#           render
-#           render --set secrets.create=true
-#           for f in hetzner dev; do
-#             render -f "$CHART_DIR/values-$f.yaml"
-#           done
+# Pushing a packaged copy to GHCR would create a second artifact that nothing
+# installs from, and that can silently disagree with the working tree — a
+# registry claiming to hold "0.1.0" while a different 0.1.0 is what Terraform
+# actually applied. If this chart is ever meant to be consumed by someone who
+# has not cloned the repo, add a publish job back AND point
+# `helm_release.chart` at `oci://...` at a pinned version, so the published
+# artifact and the deployed one are the same thing by construction.
+name: helm-lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/helm-lint.yml"
+  pull_request:
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/helm-lint.yml"
+  workflow_dispatch:
+
+env:
+  CHART_DIR: charts/health-stack
+
+jobs:
+  # ── Lint + render every values file (catches template regressions) ──────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: helm lint (default + each values file)
+        run: |
+          set -e
+          # Same dummy secrets as the render step below — without them lint emits
+          # "missing required values" warnings per invocation, which is
+          # noise that would hide a real one. See that step for why they exist.
+          DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
+          helm lint "$CHART_DIR" $DUMMY
+          for f in hetzner dev; do
+            echo "── lint values-$f ──"
+            helm lint "$CHART_DIR" $DUMMY -f "$CHART_DIR/values-$f.yaml"
+          done
+
+      - name: helm template render-check
+        run: |
+          set -e
+          # DUMMY keycloak secrets are required for any render to succeed:
+          # configmaps.yaml renders cdrs.yml (hapi-svc client secret) and
+          # keycloak.yaml renders the realm import (all three client secrets),
+          # each behind `required`; values-hetzner.yaml additionally blanks the
+          # dev defaults so a bare hetzner render fails loudly. Terraform always
+          # supplies the real values (set_sensitive in modules/k8s-apps), so
+          # deploys are unaffected — but a bare `helm template` has nothing to
+          # substitute and fails outright.
+          #
+          # The values are meaningless and never leave this runner; they exist
+          # so the templates can be exercised at all.
+          DUMMY='--set secrets.values.keycloak.API_CLIENT_SECRET=ci --set secrets.values.keycloak.HAPI_SVC_SECRET=ci --set secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET=ci --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD=ci --set secrets.values.keycloak.KC_DB_PASSWORD=ci --set secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET=ci'
+
+          # Render must produce valid, non-empty YAML for both openFHIR modes and
+          # for each per-cloud values file.
+          render() {
+            echo "── template $* ──"
+            helm template health-stack "$CHART_DIR" -n health-stack $DUMMY "$@" \
+              | python3 -c 'import sys,yaml; d=[x for x in yaml.safe_load_all(sys.stdin) if x]; assert d, "empty render"; print(f"  {len(d)} objects OK")'
+          }
+          render
+          render --set secrets.create=true
+          for f in hetzner dev; do
+            render -f "$CHART_DIR/values-$f.yaml"
+          done
