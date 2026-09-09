@@ -312,7 +312,7 @@ benefit.
 > bites in two cases: you add the IPS set back alongside EPS, or you point the engine
 > at a store that already has IPS mappers loaded (an existing CDR, a reused Postgres
 > volume). Then `make bootstrap` reports the losers as `FAILED`, and the failure is
-> quiet: `/openfhir/tofhir` still answers **200**, but with a bare `Composition` and no
+> quiet: `$tofhir` still answers **200**, but with a bare `Composition` and no
 > clinical resources. After bootstrapping, check the ledger for `FAILED` and confirm the
 > Bundle has more than one entry. To switch an already-loaded mapper to the other set,
 > `PUT /fc/model/{id}` with the YAML and `Content-Type: text/plain`

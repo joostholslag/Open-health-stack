@@ -42,9 +42,10 @@ hapi:
 # (ClientCredentialsConfig.isConfigured()). A partial block makes every store
 # fail with "Token request failed ... invalid_client" — never set a subset.
 #
-# scope=openfhir.map is the one scope the mapping API (/openfhir/tofhir,
-# /openfhir/toopenehr) demands; hapi-svc holds it as a default client scope,
-# the explicit request keeps the hop least-privilege and self-documenting.
+# scope=openfhir.map is the one scope the mapping operations ($tofhir,
+# $toopenehr — the legacy /openfhir/* API pre-3.0.0) demand; hapi-svc holds it
+# as a default client scope, the explicit request keeps the hop
+# least-privilege and self-documenting.
 openfhir:
   base-url: ${OPENFHIR_BASE_URL:http://openfhir:8080}
   oauth2:

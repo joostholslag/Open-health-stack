@@ -82,9 +82,9 @@ Compose and chart MUST declare the same tag for shared components;
 ## Known silent failure
 
 Stale/colliding openFHIR mappers (reused Postgres volume, or IPS + EPS sets
-loaded together) keep `/openfhir/tofhir` answering **200** — but with a bare
+loaded together) keep `$tofhir` answering **200** — but with a bare
 `{Bundle, Composition}` and zero clinical resources. `make smoke` stays green
-through this; **only `make verify` catches it** (tofhir entry-count check).
+through this; **only `make verify` catches it** (`$tofhir` entry-count check).
 Fix: `make destroy`, clean start.
 
 ## Canonical clean start

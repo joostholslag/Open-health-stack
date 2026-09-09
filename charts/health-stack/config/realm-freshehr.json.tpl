@@ -309,7 +309,7 @@
     },
     {
       "name": "openfhir.map",
-      "description": "openFHIR: run mappings (/openfhir/tofhir, /openfhir/toopenehr)",
+      "description": "openFHIR: run mappings ($tofhir, $toopenehr)",
       "protocol": "openid-connect",
       "attributes": {
         "include.in.token.scope": "true",

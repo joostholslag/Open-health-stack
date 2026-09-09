@@ -3,10 +3,10 @@
 #
 # smoke proves the AUTH layer (right HTTP codes bare vs Bearer). It stays green
 # even when the openFHIR mapping chain is completely broken — the documented
-# silent failure where /openfhir/tofhir answers 200 with a bare Composition and
+# silent failure where $tofhir answers 200 with a bare Composition and
 # no clinical resources (README "Mapping sets collide"). This suite proves the
 # DATA plane: templates registered, mappings visible to the freshehr tenant,
-# a FHIR bundle actually lands in the CDR, AQL finds it, and tofhir produces
+# a FHIR bundle actually lands in the CDR, AQL finds it, and $tofhir produces
 # clinical resources — not just a 200.
 #
 # Prereqs: `make up` (+ `make template` + `make bootstrap` once per fresh CDR).
@@ -125,26 +125,34 @@ else
   fail "AQL round-trip (HTTP $acode, EPS row present: no)"
 fi
 
-# ── 7. tofhir entry count — the silent-failure killer ────────────────────────
+# ── 7. $tofhir entry count — the silent-failure killer ───────────────────────
 # 200 alone is NOT success: with stale/colliding mappers the engine still
 # answers 200 but the Bundle is bare {Bundle, Composition} with zero clinical
 # resources. Assert real content.
-# Double /openfhir on purpose: nginx strips the first one (route prefix), and
-# the engine's raw-flat-JSON mapping API itself lives under /openfhir/tofhir —
-# unlike the root-level $-operations ($bootstrap, $tofhir), where $tofhir wants
-# a FHIR Parameters wrapper instead of the flat composition.
+# Probes the root-level $tofhir operation — what the HAPI interceptor and the
+# nictiz-ui BFF call since openFHIR 3.0.0 — not the legacy raw-flat-JSON
+# /openfhir/tofhir API. The operation wants a Parameters resource whose
+# `composition` parameter is the STRINGIFIED flat composition, so the fixture
+# is JSON-escaped inline (backslashes, quotes, then newlines dropped — legal:
+# they are inter-token whitespace in the embedded JSON). Pure sed/tr, keeping
+# the repo's no-jq rule. A healthy Bundle now also carries an engine-generated
+# Provenance entry on top of the clinical resources.
+escaped=$(sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' "$FLAT_FIXTURE" | tr -d '\n\r\t')
+printf '{"resourceType":"Parameters","parameter":[{"name":"composition","valueString":"%s"}]}' \
+  "$escaped" > "$SCRIPT_DIR/.tofhir-params.json.tmp"
 tof=$(curl -sk -w '\n%{http_code}' -X POST \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  --data-binary @"$FLAT_FIXTURE" \
-  "$EDGE/openfhir/openfhir/tofhir?templateId=EPS%20Patient%20Summary")
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/fhir+json' \
+  --data-binary @"$SCRIPT_DIR/.tofhir-params.json.tmp" \
+  "$EDGE/openfhir/\$tofhir?templateId=EPS%20Patient%20Summary")
+rm -f "$SCRIPT_DIR/.tofhir-params.json.tmp"
 tcode=$(printf '%s' "$tof" | tail -n1)
 tbody=$(printf '%s' "$tof" | sed '$d')
 rcount=$(printf '%s' "$tbody" | grep -o '"resourceType"' | wc -l | tr -d ' ')
 if [ "$tcode" = 200 ] && [ "$rcount" -ge 3 ] \
   && printf '%s' "$tbody" | grep -qE '"resourceType"[[:space:]]*:[[:space:]]*"(AllergyIntolerance|Condition|Procedure|Device)"'; then
-  pass "tofhir: $rcount resourceTypes incl. clinical resources"
+  pass "\$tofhir: $rcount resourceTypes incl. clinical resources"
 else
-  fail "tofhir: HTTP $tcode, $rcount resourceTypes, clinical resources missing — bare {Bundle, Composition} means stale/colliding mappers: run make destroy and rebootstrap"
+  fail "\$tofhir: HTTP $tcode, $rcount resourceTypes, clinical resources missing — bare {Bundle, Composition} means stale/colliding mappers: run make destroy and rebootstrap"
 fi
 
 # ── 8. FHIR read-back ────────────────────────────────────────────────────────
