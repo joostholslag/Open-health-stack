@@ -120,14 +120,26 @@ resource "random_password" "oauth2_proxy_cookie" {
   special = false
 }
 
-# Cluster add-ons (hcloud CCM/CSI + ingress-nginx + cert-manager) + the health-stack chart.
+# Hetzner-specific cloud-provider integration (CCM + CSI). Same install_apps
+# gating as module.apps below — both are meaningless before the cluster exists.
+module "hcloud_cloud_integration" {
+  source = "../../modules/hcloud-cloud-integration"
+  count  = var.install_apps ? 1 : 0
+
+  hcloud_token = var.hcloud_token
+  network_id   = module.network.network_id
+
+  depends_on = [module.cluster]
+}
+
+# Cluster add-ons (ingress-nginx + cert-manager) + the health-stack chart.
+# Provider-agnostic — the Hetzner-specific cloud integration above is a
+# separate module so this one doesn't need to change per cloud.
 module "apps" {
   source = "../../modules/k8s-apps"
   count  = var.install_apps ? 1 : 0
 
   kubeconfig_path   = var.kubeconfig_path
-  hcloud_token      = var.hcloud_token
-  network_id        = module.network.network_id
   domain            = var.domain
   letsencrypt_email = var.letsencrypt_email
 
@@ -151,5 +163,7 @@ module "apps" {
   chart_path        = "${path.module}/../../../charts/health-stack"
   chart_values_file = "${path.module}/../../../charts/health-stack/values-hetzner.yaml"
 
-  depends_on = [module.cluster]
+  # module.cluster: needs the kubeconfig to exist. module.hcloud_cloud_integration:
+  # needs the CSI driver up before the chart's PVCs try to bind.
+  depends_on = [module.cluster, module.hcloud_cloud_integration]
 }
