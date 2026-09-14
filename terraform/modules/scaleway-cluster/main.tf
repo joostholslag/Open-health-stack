@@ -209,9 +209,6 @@ resource "null_resource" "kubeconfig" {
       set -e
       scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         root@${scaleway_instance_server.control_plane.public_ips[0].address}:/etc/rancher/k3s/k3s.yaml ${var.kubeconfig_path}
-      # -i.bak (not bare -i): BSD sed (macOS) requires an explicit backup-suffix
-      # argument after -i, or it swallows the script as that argument and treats
-      # the filename as the script itself. -i.bak works identically on GNU sed too.
       sed -i.bak 's#https://127.0.0.1:6443#https://${scaleway_instance_server.control_plane.public_ips[0].address}:6443#g' ${var.kubeconfig_path}
       rm -f ${var.kubeconfig_path}.bak
       chmod 600 ${var.kubeconfig_path}
