@@ -54,5 +54,9 @@ terraform {
     skip_region_validation      = true
     skip_requesting_account_id  = true
     skip_s3_checksum            = true
+    # Virtual-hosted-style (<bucket>.s3.nl-ams.scw.cloud) is a different host
+    # than s3.nl-ams.scw.cloud, so it needs its own egress allowlist entry.
+    # Path-style avoids that entirely.
+    use_path_style = true
   }
 }
