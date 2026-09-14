@@ -240,7 +240,8 @@ resource "null_resource" "kubeconfig" {
       set -e
       scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         root@${hcloud_server.control_plane.ipv4_address}:/etc/rancher/k3s/k3s.yaml ${var.kubeconfig_path}
-      sed -i 's#https://127.0.0.1:6443#https://${hcloud_server.control_plane.ipv4_address}:6443#g' ${var.kubeconfig_path}
+      sed -i.bak 's#https://127.0.0.1:6443#https://${hcloud_server.control_plane.ipv4_address}:6443#g' ${var.kubeconfig_path}
+      rm -f ${var.kubeconfig_path}.bak
       chmod 600 ${var.kubeconfig_path}
     EOT
   }
