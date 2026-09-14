@@ -5,9 +5,14 @@
 # in k8s-apps and charts/health-stack; Scaleway specifics are the four scaleway-*
 # modules.
 #
-# TWO-PHASE APPLY (kubeconfig must exist before the k8s/helm providers connect):
-#   terraform apply -var 'install_apps=false'   # phase 1: cluster only
-#   terraform apply                              # phase 2: add-ons + app chart
+# THREE-PHASE APPLY (kubeconfig must exist before the k8s/helm providers connect,
+# and the CCM must untaint nodes before the app chart's PVCs can bind):
+#   terraform apply -var 'install_apps=false' -var 'install_cloud_integration=false'
+#     # phase 1: cluster only — no kubeconfig yet, so no k8s/helm provider calls
+#   terraform apply -var 'install_apps=false'
+#     # phase 2: cloud-controller-manager + CSI driver — untaints nodes, no domain needed yet
+#   terraform apply
+#     # phase 3: add-ons + the health-stack chart (needs a real domain)
 # ============================================================================
 
 module "network" {
@@ -117,11 +122,14 @@ resource "random_password" "oauth2_proxy_cookie" {
   special = false
 }
 
-# Scaleway-specific cloud-provider integration (CCM + CSI). Same install_apps
-# gating as module.apps below — both are meaningless before the cluster exists.
+# Scaleway-specific cloud-provider integration (CCM + CSI). Gated on its own
+# flag, not install_apps: it only needs the kubeconfig (module.cluster), not a
+# domain, and nodes stay tainted node.cloudprovider.kubernetes.io/uninitialized
+# (unschedulable) until it runs — so it belongs in its own phase 2, ahead of
+# the domain-dependent health-stack chart.
 module "scaleway_cloud_integration" {
   source = "../../modules/scaleway-cloud-integration"
-  count  = var.install_apps ? 1 : 0
+  count  = var.install_cloud_integration ? 1 : 0
 
   scw_access_key  = var.scw_access_key
   scw_secret_key  = var.scw_secret_key

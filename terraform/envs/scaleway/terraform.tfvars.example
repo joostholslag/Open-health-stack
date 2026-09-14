@@ -30,7 +30,9 @@ admin_ssh_cidrs = ["0.0.0.0/0"]
 domain            = "health.example.com" # must resolve to the LB IP (output after apply)
 letsencrypt_email = "you@example.com"
 
-# Two-phase apply: set install_apps=false for the first apply (cluster only),
-# then true (default) for the second. See providers.tf.
-install_apps    = true
-kubeconfig_path = "./kubeconfig"
+# Three-phase apply: cluster only (install_apps=false, install_cloud_integration=false),
+# then CCM/CSI (install_apps=false, install_cloud_integration=true — the default),
+# then the app chart (both true, once you have a real domain). See main.tf.
+install_apps              = true
+install_cloud_integration = true
+kubeconfig_path           = "./kubeconfig"
