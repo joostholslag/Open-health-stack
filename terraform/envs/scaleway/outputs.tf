@@ -68,6 +68,16 @@ output "credentials" {
   }
 }
 
+output "domain" {
+  description = "Configured ingress domain (not sensitive — lets CI mirror this env's helm_release without a separately-configured variable)."
+  value       = var.domain
+}
+
+output "letsencrypt_email" {
+  description = "Configured Let's Encrypt contact email (see domain output above)."
+  value       = var.letsencrypt_email
+}
+
 output "kc_api_client_secret" {
   description = "client_credentials secret for the api-client OIDC client."
   sensitive   = true

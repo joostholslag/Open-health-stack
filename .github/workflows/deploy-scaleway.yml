@@ -1,0 +1,130 @@
+# Auto-deploy the health-stack chart to the Scaleway cluster (a development
+# environment) on push to main, or on demand against any other branch.
+#
+# WHY NOT `terraform apply` HERE: that would re-provision infra on every push,
+# far more blast radius than "roll out a chart change." This does the
+# `helm upgrade` half only — it assumes the cluster + CCM/CSI already exist
+# (terraform/envs/scaleway's phase 1 + phase 2, applied by hand — see that
+# env's README).
+#
+# WHY THIS READS SECRETS FROM `terraform output` INSTEAD OF GITHUB SECRETS:
+# terraform/modules/k8s-apps's helm_release.health_stack generates every DB/
+# Keycloak/OAuth2 credential via `random_password` and injects them with
+# set_sensitive. charts/health-stack/values-scaleway.yaml deliberately blanks
+# the Keycloak ones and sets secrets.create=false (so a bare manual install
+# fails loudly instead of shipping dev defaults) — so re-applying that file
+# from CI without also re-supplying those overrides would silently wipe live
+# credentials on every deploy. Reading them fresh from Terraform state each
+# run (the same state `terraform apply` already uses) keeps ONE source of
+# truth instead of copying secrets into GitHub where they could drift.
+#
+# NOT covered here: ingress-nginx / cert-manager (module.k8s-apps's other two
+# helm_releases) — those add-ons rarely change and a `terraform apply` handles
+# them; this workflow is scoped to the app chart only, matching its trigger
+# paths below.
+#
+# ── ONE-TIME SETUP ───────────────────────────────────────────────────────────
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   SCW_ACCESS_KEY, SCW_SECRET_KEY  — same Scaleway API credentials as in your
+#     local terraform.tfvars. Used as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+#     to read the S3-compatible state backend (see envs/scaleway/versions.tf)
+#     via `terraform output` — read-only use, no terraform apply runs in CI.
+#   SCALEWAY_KUBECONFIG — contents of the kubeconfig fetched by your local
+#     `terraform apply` (envs/scaleway/kubeconfig by default). Paste the whole
+#     file. Only needs updating if the control-plane is recreated.
+name: deploy-scaleway
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/health-stack/**"
+      - ".github/workflows/deploy-scaleway.yml"
+  workflow_dispatch: {} # run against any branch: gh workflow run deploy-scaleway.yml --ref <branch>
+
+env:
+  TF_DIR: terraform/envs/scaleway
+  CHART_DIR: charts/health-stack
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: scaleway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: terraform init (read-only — state lookup only, no apply)
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+        run: terraform init -input=false
+
+      - name: Fetch generated credentials + config from terraform state
+        id: tfcreds
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          creds=$(terraform output -json credentials)
+          domain=$(terraform output -raw domain)
+          email=$(terraform output -raw letsencrypt_email)
+
+          # Mask every secret value before it can hit a log line — these come
+          # from `terraform output`, not the `secrets.*` context, so GitHub
+          # Actions does not auto-redact them.
+          for key in postgres_superuser ehrbase_db ehrbase_db_admin hapi_db openfhir_db \
+                     keycloak_db keycloak_admin_password kc_api_client_secret \
+                     kc_hapi_svc_secret oauth2_proxy_client_secret oauth2_proxy_cookie_secret; do
+            value=$(echo "$creds" | jq -r --arg k "$key" '.[$k]')
+            echo "::add-mask::$value"
+            echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+          done
+          echo "::add-mask::$domain"
+          echo "domain=${domain}" >> "$GITHUB_OUTPUT"
+          echo "email=${email}" >> "$GITHUB_OUTPUT"
+
+      - name: Write kubeconfig
+        run: |
+          umask 077
+          printf '%s' "${{ secrets.SCALEWAY_KUBECONFIG }}" > "$RUNNER_TEMP/kubeconfig"
+
+      - name: helm upgrade health-stack
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        run: |
+          set -euo pipefail
+          helm upgrade health-stack "$CHART_DIR" \
+            --namespace health-stack --create-namespace \
+            -f "$CHART_DIR/values-scaleway.yaml" \
+            --set ingress.host="${{ steps.tfcreds.outputs.domain }}" \
+            --set clusterIssuer.create=true \
+            --set clusterIssuer.email="${{ steps.tfcreds.outputs.email }}" \
+            --set ingress.tls.clusterIssuer=letsencrypt-prod \
+            --set secrets.create=true \
+            --set-string secrets.values.postgres.POSTGRES_PASSWORD="${{ steps.tfcreds.outputs.postgres_superuser }}" \
+            --set-string secrets.values.postgres.EHRBASE_PASSWORD="${{ steps.tfcreds.outputs.ehrbase_db }}" \
+            --set-string secrets.values.postgres.EHRBASE_PASSWORD_ADMIN="${{ steps.tfcreds.outputs.ehrbase_db_admin }}" \
+            --set-string secrets.values.ehrbase.DB_PASS="${{ steps.tfcreds.outputs.ehrbase_db }}" \
+            --set-string secrets.values.ehrbase.DB_PASS_ADMIN="${{ steps.tfcreds.outputs.ehrbase_db_admin }}" \
+            --set secrets.values.ehrbase.SERVER_NODENAME="${{ steps.tfcreds.outputs.domain }}" \
+            --set-string secrets.values.hapi.HAPI_DB_PASS="${{ steps.tfcreds.outputs.hapi_db }}" \
+            --set-string secrets.values.openfhir.OPENFHIR_DB_PASS="${{ steps.tfcreds.outputs.openfhir_db }}" \
+            --set secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            --set-string secrets.values.keycloak.KC_BOOTSTRAP_ADMIN_PASSWORD="${{ steps.tfcreds.outputs.keycloak_admin_password }}" \
+            --set-string secrets.values.keycloak.KC_DB_PASSWORD="${{ steps.tfcreds.outputs.keycloak_db }}" \
+            --set-string secrets.values.keycloak.API_CLIENT_SECRET="${{ steps.tfcreds.outputs.kc_api_client_secret }}" \
+            --set-string secrets.values.keycloak.HAPI_SVC_SECRET="${{ steps.tfcreds.outputs.kc_hapi_svc_secret }}" \
+            --set-string secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET="${{ steps.tfcreds.outputs.oauth2_proxy_client_secret }}" \
+            --set-string secrets.values.keycloak.OAUTH2_PROXY_COOKIE_SECRET="${{ steps.tfcreds.outputs.oauth2_proxy_cookie_secret }}" \
+            --atomic --timeout 10m
