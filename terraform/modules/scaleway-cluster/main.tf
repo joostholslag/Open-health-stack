@@ -149,7 +149,11 @@ resource "scaleway_instance_server" "control_plane" {
   tags = ["cluster:${var.name}", "role:control-plane"]
 
   lifecycle {
-    ignore_changes = [user_data] # avoid recreate churn on template tweaks
+    ignore_changes = [
+      user_data,               # avoid recreate churn on template tweaks
+      additional_volume_ids,   # owned by the Scaleway CSI driver, not this config —
+                                # reconciling it here would detach a live PVC's volume
+    ]
   }
 }
 
@@ -184,7 +188,11 @@ resource "scaleway_instance_server" "agent" {
   depends_on = [scaleway_instance_server.control_plane]
 
   lifecycle {
-    ignore_changes = [user_data]
+    ignore_changes = [
+      user_data,               # avoid recreate churn on template tweaks
+      additional_volume_ids,   # owned by the Scaleway CSI driver, not this config —
+                                # reconciling it here would detach a live PVC's volume
+    ]
   }
 }
 
