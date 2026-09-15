@@ -34,6 +34,22 @@ locals {
   k3s_token = substr(sha256(tls_private_key.k3s_token.private_key_pem), 0, 48)
 
   ssh_private_key_path = var.ssh_private_key_path != "" ? var.ssh_private_key_path : replace(var.ssh_public_key_path, ".pub", "")
+
+  # Each server's `private_ips` list holds both an IPv4 and an IPv6 address,
+  # and the IPv6 one is not reliably at a fixed index — observed in practice
+  # landing at index 0. Select the IPv4 entry explicitly (no colon) rather
+  # than assuming an index; picking the wrong one breaks the agent's k3s
+  # join URL (unbracketed IPv6 + port isn't parseable) and would equally
+  # break LB backend targeting.
+  control_plane_private_ipv4 = [
+    for ip in scaleway_instance_server.control_plane.private_ips : ip.address if !strcontains(ip.address, ":")
+  ][0]
+
+  agent_private_ipv4s = [
+    for s in scaleway_instance_server.agent : [
+      for ip in s.private_ips : ip.address if !strcontains(ip.address, ":")
+    ][0]
+  ]
 }
 
 # ── SSH key ──────────────────────────────────────────────────────────────────
@@ -154,7 +170,7 @@ resource "scaleway_instance_server" "agent" {
     "cloud-init" = templatefile("${path.module}/../../cloud-init/scaleway-agent.yaml.tftpl", {
       k3s_version  = var.k3s_version
       k3s_token    = local.k3s_token
-      server_url   = "https://${scaleway_instance_server.control_plane.private_ips[0].address}:6443"
+      server_url   = "https://${local.control_plane_private_ipv4}:6443"
       network_cidr = var.network_cidr
     })
   }
@@ -209,9 +225,6 @@ resource "null_resource" "kubeconfig" {
       set -e
       scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         root@${scaleway_instance_server.control_plane.public_ips[0].address}:/etc/rancher/k3s/k3s.yaml ${var.kubeconfig_path}
-      # -i.bak (not bare -i): BSD sed (macOS) requires an explicit backup-suffix
-      # argument after -i, or it swallows the script as that argument and treats
-      # the filename as the script itself. -i.bak works identically on GNU sed too.
       sed -i.bak 's#https://127.0.0.1:6443#https://${scaleway_instance_server.control_plane.public_ips[0].address}:6443#g' ${var.kubeconfig_path}
       rm -f ${var.kubeconfig_path}.bak
       chmod 600 ${var.kubeconfig_path}
@@ -224,8 +237,8 @@ resource "null_resource" "kubeconfig" {
 # ── Outputs ──────────────────────────────────────────────────────────────────
 output "control_plane_ipv4" { value = scaleway_instance_server.control_plane.public_ips[0].address }
 output "agent_ipv4s" { value = [for s in scaleway_instance_server.agent : s.public_ips[0].address] }
-output "control_plane_private_ip" { value = scaleway_instance_server.control_plane.private_ips[0].address }
-output "agent_private_ips" { value = [for s in scaleway_instance_server.agent : s.private_ips[0].address] }
+output "control_plane_private_ip" { value = local.control_plane_private_ipv4 }
+output "agent_private_ips" { value = local.agent_private_ipv4s }
 output "k3s_token" {
   value     = local.k3s_token
   sensitive = true

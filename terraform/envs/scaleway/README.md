@@ -78,14 +78,24 @@ and note two things this environment's setup ran into:
 
 ## Apply
 
-Two-phase, same pattern as Hetzner:
+Three-phase — Hetzner's two-phase pattern (cluster, then apps) plus a
+Scaleway-specific middle phase: nodes are bootstrapped with
+`--kubelet-arg=cloud-provider=external`, so they carry the
+`node.cloudprovider.kubernetes.io/uninitialized` taint (unschedulable) until
+the cloud-controller-manager runs, and the CCM only needs the kubeconfig, not
+a domain — so it has its own `install_cloud_integration` flag, independent of
+`install_apps`.
 
 ```bash
 cd terraform/envs/scaleway
 cp terraform.tfvars.example terraform.tfvars   # fill in real values, gitignored
 terraform init
-terraform apply -var 'install_apps=false'   # phase 1: cluster only
-terraform apply                              # phase 2: add-ons + health-stack chart
+terraform apply -var 'install_apps=false' -var 'install_cloud_integration=false'
+  # phase 1: cluster only — no kubeconfig yet, so no k8s/helm provider calls
+terraform apply -var 'install_apps=false'
+  # phase 2: cloud-controller-manager + CSI driver — untaints nodes, no domain needed yet
+terraform apply
+  # phase 3: add-ons + health-stack chart (needs a real domain)
 ```
 
 ## Status

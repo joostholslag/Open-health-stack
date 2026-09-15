@@ -111,6 +111,21 @@ variable "install_apps" {
   default     = true
 }
 
+variable "install_cloud_integration" {
+  description = <<-EOT
+    Whether to install Scaleway's cloud-controller-manager + CSI driver. Only
+    needs the kubeconfig (module.cluster), not a domain — so it has its own
+    flag rather than sharing install_apps. Nodes are bootstrapped with
+    --kubelet-arg=cloud-provider=external, so until the CCM runs they carry
+    the node.cloudprovider.kubernetes.io/uninitialized taint and stay
+    unschedulable; leaving this false alongside install_apps=false is a valid
+    cluster-only phase, but the CCM must go in before install_apps=true (the
+    health-stack chart's PVCs need the CSI driver to bind).
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "kubeconfig_path" {
   description = "Local path where the fetched k3s kubeconfig is written."
   type        = string
