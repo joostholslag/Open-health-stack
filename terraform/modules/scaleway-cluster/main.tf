@@ -14,6 +14,19 @@ variable "agent_type" { type = string }
 variable "agent_count" { type = number }
 variable "ssh_public_key_path" { type = string }
 variable "admin_ssh_cidrs" { type = list(string) }
+
+variable "k3s_api_cidrs" {
+  description = <<-EOT
+    CIDRs allowed to reach the k3s API (port 6443) from outside the private
+    network, separate from admin_ssh_cidrs. Port 6443 requires a valid client
+    cert (kubeconfig) to do anything, unlike SSH — so this can safely default
+    wide open even when admin_ssh_cidrs is locked down to one IP, letting CI
+    runners (no fixed IP) reach the cluster for `terraform apply` without
+    also exposing SSH.
+  EOT
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
 variable "k3s_version" { type = string }
 variable "private_network_id" { type = string }
 variable "network_cidr" { type = string }
@@ -98,7 +111,7 @@ resource "scaleway_instance_security_group" "this" {
   }
 
   dynamic "inbound_rule" {
-    for_each = toset(concat([var.network_cidr], var.admin_ssh_cidrs))
+    for_each = toset(concat([var.network_cidr], var.k3s_api_cidrs))
     content {
       action   = "accept"
       protocol = "TCP"

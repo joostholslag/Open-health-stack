@@ -72,6 +72,18 @@ variable "admin_ssh_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "k3s_api_cidrs" {
+  description = <<-EOT
+    CIDRs allowed to reach the k3s API (port 6443), separate from
+    admin_ssh_cidrs. Safe to leave wide open (the default) even when
+    admin_ssh_cidrs is locked down: port 6443 requires a valid client cert
+    (kubeconfig) to do anything, and this is what lets a CI runner with no
+    fixed IP run `terraform apply` against the cluster.
+  EOT
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 # ── Networking ───────────────────────────────────────────────────────────────
 variable "network_cidr" {
   description = "CIDR for the private network."

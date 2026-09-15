@@ -34,6 +34,7 @@ module "cluster" {
   agent_count         = var.agent_count
   ssh_public_key_path = var.ssh_public_key_path
   admin_ssh_cidrs     = var.admin_ssh_cidrs
+  k3s_api_cidrs       = var.k3s_api_cidrs
   k3s_version         = var.k3s_version
 
   private_network_id = module.network.private_network_id
