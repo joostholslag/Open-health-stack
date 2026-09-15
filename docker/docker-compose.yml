@@ -1,10 +1,11 @@
 # ============================================================================
 # freshehr-open-health-stack — Layer 1: local docker-compose
 # ----------------------------------------------------------------------------
-# The whole stack, self-contained: hapi (+openFHIR interceptor), ehrbase, the
+# The whole stack, self-contained: hapi (+openFHIR interceptor), ehrbase-backend
+# (fronted by an OPA-backed PEP gateway at the `ehrbase` DNS name), opa, the
 # openFHIR engine, hades (FHIR terminology server), keycloak (OIDC IdP),
 # oauth2-proxy (edge token validator), ONE shared Postgres (a database each
-# for ehrbase/hapi/openfhir/keycloak), and nginx — 8 services.
+# for ehrbase/hapi/openfhir/keycloak), and nginx — 10 services.
 #
 # Everything runs in-cluster — there is no hosted-sandbox mode. The openFHIR engine
 # therefore REQUIRES the vendor license at openfhir/license/openfhir-license.json
@@ -12,7 +13,10 @@
 #
 # Auth (mirrors the k8s ingress split):
 #   /fhir         edge-validated by nginx auth_request -> oauth2-proxy
-#   /ehrbase      EHRbase validates natively (SECURITY_AUTHTYPE=OAUTH)
+#   /ehrbase      EHRbase validates natively (SECURITY_AUTHTYPE=OAUTH), PLUS an
+#                 OPA-backed PEP gateway in front of it (services ehrbase/opa)
+#                 that every caller hits transparently — nginx, HAPI, AND
+#                 openFHIR's own direct CDR connection (see docker/ehrbase-gateway/)
 #   /openfhir     engine validates natively (openfhir.protected, per-API scopes)
 #   /terminology  edge-validated by nginx auth_request -> oauth2-proxy
 #   /auth         Keycloak itself, public (token/discovery endpoints)
@@ -70,12 +74,19 @@ services:
       - health-stack
 
   # ── EHRbase (openEHR CDR) ─────────────────────────────────────────────────
-  ehrbase:
+  # Named `ehrbase-backend`, not `ehrbase`: the `ehrbase` DNS name is now the
+  # OPA-backed PEP gateway below, so every existing caller (nginx /ehrbase,
+  # HAPI's cdrs.yml, openFHIR's CDR connection) reaches it transparently —
+  # none of them needed to change.
+  ehrbase-backend:
     # Pinned, not :latest — matches the Helm chart (values.yaml ehrbase.image.tag);
     # the MANAGEMENT_* env below is version-coupled to this tag.
     image: ehrbase/ehrbase:2.35.1
-    container_name: freshehr-ehrbase
-    # Direct host port (8082:8080) lives in docker-compose.override.yml.
+    container_name: freshehr-ehrbase-backend
+    # Direct host port (8092:8080), past the PEP too, lives in
+    # docker-compose.override.yml — for debugging the gateway/OPA policy
+    # itself. The dev bypass callers actually use (8082:8080) is on the
+    # `ehrbase` gateway service below, so it stays OPA-gated like prod.
     environment:
       # Native OAuth2 resource server (vendor-supported): EHRbase validates
       # Bearer tokens itself, so /ehrbase deliberately has NO nginx auth_request
@@ -122,6 +133,45 @@ services:
       timeout: 10s
       retries: 20
       start_period: 90s
+    networks:
+      - health-stack
+
+  # ── EHRbase PEP gateway (edge-of-EHRbase authorization, OPA-backed) ───────
+  # Takes over the `ehrbase` DNS name (see ehrbase-backend above). Every
+  # request to EHRbase — external via nginx /ehrbase, HAPI's cdrs.yml hop,
+  # and openFHIR's own CDR connection — passes through here first.
+  ehrbase:
+    image: openresty/openresty:1.25.3.2-alpine
+    container_name: freshehr-ehrbase-gateway
+    volumes:
+      - ./ehrbase-gateway/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    depends_on:
+      ehrbase-backend:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ehrbase/management/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+    networks:
+      - health-stack
+
+  # ── OPA (policy decision point for the EHRbase PEP) ───────────────────────
+  opa:
+    image: openpolicyagent/opa:0.70.0
+    container_name: freshehr-opa
+    command: ["run", "--server", "--addr=:8181", "/policies"]
+    volumes:
+      - ./opa/policies:/policies:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - health-stack
 
