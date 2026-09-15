@@ -29,6 +29,11 @@ variable "scw_project_id" {
 variable "scw_zone" {
   type = string
 }
+# The Scaleway SDK (which the CCM's cloud-provider init uses) requires both
+# region and zone — SCW_DEFAULT_ZONE alone fails with "region is required".
+variable "scw_region" {
+  type = string
+}
 variable "kubeconfig_path" {
   type = string
 }
@@ -46,6 +51,7 @@ resource "kubernetes_secret" "scaleway" {
     SCW_ACCESS_KEY         = var.scw_access_key
     SCW_SECRET_KEY         = var.scw_secret_key
     SCW_DEFAULT_PROJECT_ID = var.scw_project_id
+    SCW_DEFAULT_REGION     = var.scw_region
     SCW_DEFAULT_ZONE       = var.scw_zone
   }
 }

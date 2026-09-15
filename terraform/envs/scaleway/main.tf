@@ -134,6 +134,7 @@ module "scaleway_cloud_integration" {
   scw_access_key  = var.scw_access_key
   scw_secret_key  = var.scw_secret_key
   scw_project_id  = var.scw_project_id
+  scw_region      = var.region
   scw_zone        = var.zone
   kubeconfig_path = var.kubeconfig_path
 
