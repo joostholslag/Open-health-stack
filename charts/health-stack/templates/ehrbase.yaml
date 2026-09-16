@@ -63,7 +63,13 @@ spec:
         - name: opa
           image: {{ include "health-stack.image" (dict "image" .Values.ehrbase.opa.image) | quote }}
           imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.ehrbase.opa.image) }}
-          args: ["run", "--server", "--addr=:{{ .Values.ehrbase.opa.port }}", "/policies"]
+          # --ignore=".*" skips the hidden ..data symlink and ..<timestamp>
+          # directory that Kubernetes' ConfigMap volume atomic-writer creates
+          # alongside the visible authz.rego symlink — without it, OPA's
+          # recursive directory loader picks up the same package twice (once
+          # via the symlink, once via the real hidden path) and fails with
+          # "multiple default rules ... found".
+          args: ["run", "--server", "--addr=:{{ .Values.ehrbase.opa.port }}", "--ignore=.*", "/policies"]
           ports:
             - name: opa-http
               containerPort: {{ .Values.ehrbase.opa.port }}
