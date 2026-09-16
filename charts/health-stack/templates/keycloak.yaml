@@ -58,6 +58,7 @@ metadata:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "keycloak") | nindent 4 }}
 spec:
   replicas: {{ .Values.keycloak.replicas }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       {{- include "health-stack.selectorLabels" (dict "name" "keycloak") | nindent 6 }}

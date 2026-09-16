@@ -32,6 +32,7 @@ module "cluster" {
   control_plane_type  = var.control_plane_type
   agent_type          = var.agent_type
   agent_count         = var.agent_count
+  root_volume_gb      = var.root_volume_gb
   ssh_public_key_path = var.ssh_public_key_path
   admin_ssh_cidrs     = var.admin_ssh_cidrs
   k3s_api_cidrs       = var.k3s_api_cidrs

@@ -58,6 +58,12 @@ runcmd:
       sleep 2
     done
     [ -n "$PUBLIC_IP" ] || { echo "FATAL: could not determine public IPv4 from metadata service" >&2; exit 1; }
+    # kubelet's own defaults (85% high / 80% low) don't start reclaiming
+    # unused container images until disk usage is already within a few
+    # percent of the DiskPressure eviction threshold — this node's cx-line
+    # disk is much bigger than Scaleway's default, so it isn't urgent here,
+    # but it's the same latent gap: enough upgrade cycles (each briefly
+    # running two image generations at once) will eventually reach it too.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_TOKEN="${k3s_token}" \
@@ -71,7 +77,9 @@ runcmd:
         --advertise-address=${node_ip} \
         --flannel-iface=${flannel_iface} \
         --tls-san=$PUBLIC_IP \
-        --write-kubeconfig-mode=0644
+        --write-kubeconfig-mode=0644 \
+        --kubelet-arg=image-gc-high-threshold-percent=70 \
+        --kubelet-arg=image-gc-low-threshold-percent=60
   # Signal readiness — Terraform's remote-exec polls for this file before it
   # pulls the kubeconfig.
   - until k3s kubectl get nodes >/dev/null 2>&1; do sleep 5; done

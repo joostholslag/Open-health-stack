@@ -17,6 +17,7 @@ metadata:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "oauth2-proxy") | nindent 4 }}
 spec:
   replicas: {{ .Values.oauth2Proxy.replicas }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       {{- include "health-stack.selectorLabels" (dict "name" "oauth2-proxy") | nindent 6 }}

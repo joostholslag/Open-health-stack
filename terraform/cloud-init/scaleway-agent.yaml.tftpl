@@ -39,6 +39,12 @@ runcmd:
     done
     [ -n "$NODE_IP" ] || { echo "FATAL: could not determine private IPv4 on $PRIVATE_IFACE" >&2; exit 1; }
 
+    # kubelet's own defaults (85% high / 80% low) don't start reclaiming
+    # unused container images until disk usage is already within a few
+    # percent of the DiskPressure eviction threshold — fine on a big disk,
+    # but on a small node it leaves almost no margin between "start
+    # collecting garbage" and "start evicting pods". Lowered so image GC
+    # kicks in with real headroom to spare.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_URL="${server_url}" \
@@ -46,6 +52,8 @@ runcmd:
       sh -s - agent \
         --kubelet-arg=cloud-provider=external \
         --node-ip=$NODE_IP \
-        --flannel-iface=$PRIVATE_IFACE
+        --flannel-iface=$PRIVATE_IFACE \
+        --kubelet-arg=image-gc-high-threshold-percent=70 \
+        --kubelet-arg=image-gc-low-threshold-percent=60
   - until systemctl is-active --quiet k3s-agent; do sleep 5; done
   - touch /tmp/k3s-ready

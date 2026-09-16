@@ -59,6 +59,19 @@ variable "image" {
   default     = "ubuntu_jammy"
 }
 
+variable "root_volume_gb" {
+  description = <<-EOT
+    Root disk size for both control-plane and agent nodes, in GB. Neither
+    server explicitly set this before — Scaleway's own default turned out to
+    be a ~9GB disk on a DEV1-L, tight enough that a run of chart upgrades
+    (each briefly running two image generations at once) triggered kubelet
+    DiskPressure and pod evictions. See the fuller comment in
+    modules/scaleway-cluster/main.tf.
+  EOT
+  type        = number
+  default     = 40
+}
+
 # ── SSH / access ─────────────────────────────────────────────────────────────
 variable "ssh_public_key_path" {
   description = "Path to the SSH public key uploaded to Scaleway and installed on nodes."

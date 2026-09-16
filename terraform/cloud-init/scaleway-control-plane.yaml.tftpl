@@ -69,6 +69,10 @@ runcmd:
 
     echo "$NODE_IP" > /tmp/node-ip
     # k3s doesn't taint control-plane by default; keeps app workloads off it.
+    # Image GC thresholds are lowered from kubelet's 85/80 defaults so unused
+    # images are reclaimed with real margin before DiskPressure eviction. The
+    # control-plane is tainted so it runs few images, but the same setting is
+    # applied on every node for consistency.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_TOKEN="${k3s_token}" \
@@ -83,6 +87,8 @@ runcmd:
         --flannel-iface=$FLANNEL_IFACE \
         --tls-san=$PUBLIC_IP \
         --write-kubeconfig-mode=0644 \
-        --node-taint CriticalAddonsOnly=true:NoExecute
+        --node-taint CriticalAddonsOnly=true:NoExecute \
+        --kubelet-arg=image-gc-high-threshold-percent=70 \
+        --kubelet-arg=image-gc-low-threshold-percent=60
   - until k3s kubectl get nodes >/dev/null 2>&1; do sleep 5; done
   - touch /tmp/k3s-ready

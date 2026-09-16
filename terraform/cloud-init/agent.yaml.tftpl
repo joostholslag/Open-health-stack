@@ -41,6 +41,12 @@ runcmd:
     done
 
   - |
+    # kubelet's own defaults (85% high / 80% low) don't start reclaiming
+    # unused container images until disk usage is already within a few
+    # percent of the DiskPressure eviction threshold — this node's cx-line
+    # disk is much bigger than Scaleway's default, so it isn't urgent here,
+    # but it's the same latent gap: enough upgrade cycles (each briefly
+    # running two image generations at once) will eventually reach it too.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_URL="${server_url}" \
@@ -48,4 +54,6 @@ runcmd:
       sh -s - agent \
         --kubelet-arg=cloud-provider=external \
         --node-ip=${node_ip} \
-        --flannel-iface=${flannel_iface}
+        --flannel-iface=${flannel_iface} \
+        --kubelet-arg=image-gc-high-threshold-percent=70 \
+        --kubelet-arg=image-gc-low-threshold-percent=60
