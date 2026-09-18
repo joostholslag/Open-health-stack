@@ -68,6 +68,7 @@ runcmd:
     [ -n "$PUBLIC_IP" ] || { echo "FATAL: could not determine public IPv4 from metadata service" >&2; exit 1; }
 
     echo "$NODE_IP" > /tmp/node-ip
+    # k3s doesn't taint control-plane by default; keeps app workloads off it.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_TOKEN="${k3s_token}" \
@@ -81,6 +82,7 @@ runcmd:
         --advertise-address=$NODE_IP \
         --flannel-iface=$FLANNEL_IFACE \
         --tls-san=$PUBLIC_IP \
-        --write-kubeconfig-mode=0644
+        --write-kubeconfig-mode=0644 \
+        --node-taint CriticalAddonsOnly=true:NoExecute
   - until k3s kubectl get nodes >/dev/null 2>&1; do sleep 5; done
   - touch /tmp/k3s-ready
