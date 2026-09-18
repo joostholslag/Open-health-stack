@@ -56,6 +56,25 @@ for opt in "$BOOTSTRAP_DIR"/*.opt; do
   fi
 done
 
+# ── 3b. OPA-backed PEP gate on /ehrbase ───────────────────────────────────────
+# smoke's auth matrix only proves "has a Bearer token" vs "doesn't" on a
+# non-admin route — it would stay green even if the gateway allowed EVERY
+# Bearer token straight through to EHRbase's /rest/admin/** without OPA ever
+# denying anything. Prove the gate itself: the default token (USER + openFHIR
+# admin(lowercase), see docker/keycloak/realm-freshehr.json) does NOT carry
+# EHRbase's own ADMIN realm role, so it must be denied on an admin path — and
+# a bare request on that same path must get 401 (no credentials), not 403
+# (credentials present but insufficient), matching EHRbase's own native
+# SECURITY_OAUTH2ADMINROLE check (README "/rest/admin/** does require the
+# ADMIN realm role").
+admin_bearer=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+  "$EDGE/ehrbase/rest/admin/ehr")
+assert_eq "OPA denies non-ADMIN token on /ehrbase/rest/admin/**" 403 "$admin_bearer"
+
+admin_bare=$(curl -sk -o /dev/null -w '%{http_code}' "$EDGE/ehrbase/rest/admin/ehr")
+assert_eq "OPA: bare request on /ehrbase/rest/admin/** is 401, not 403" 401 "$admin_bare"
+echo
+
 # ── 4. openFHIR mapping state (freshehr tenant) ──────────────────────────────
 # The engine's own STARTUP bootstrap writes under an internal tenant that is
 # invisible to freshehr callers; only `make bootstrap` loads the visible set.
