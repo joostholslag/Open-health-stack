@@ -100,6 +100,7 @@ resource "helm_release" "ingress_nginx" {
   create_namespace = true
   repository       = "https://kubernetes.github.io/ingress-nginx"
   chart            = "ingress-nginx"
+  atomic           = true
 
   set {
     name  = "controller.service.type"
@@ -136,6 +137,7 @@ resource "helm_release" "cert_manager" {
   create_namespace = true
   repository       = "https://charts.jetstack.io"
   chart            = "cert-manager"
+  atomic           = true
 
   set {
     name  = "crds.enabled"
@@ -155,6 +157,9 @@ resource "helm_release" "health_stack" {
   namespace        = "health-stack"
   create_namespace = true
   chart            = var.chart_path
+  # 300s isn't enough for a cold Keycloak boot; atomic avoids a stuck pending state.
+  timeout = 600
+  atomic  = true
 
   # Environment defaults (storage class, sizing, image tags).
   values = [file(var.chart_values_file)]
