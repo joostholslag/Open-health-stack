@@ -41,11 +41,12 @@ variable "root_volume_gb" {
     ~9GB disk. That's tight enough for k3s + this stack's several
     Deployments that a couple of rolling upgrades (each briefly running
     two image generations at once) pushed a node into DiskPressure and
-    got pods evicted. b_ssd is used (not l_ssd) because it's the volume
-    type Scaleway lets you size explicitly; UNVERIFIED whether every
-    commercial type in use here (DEV1-M control-plane, DEV1-L agent)
-    accepts a b_ssd root at all — confirm with `terraform plan` before
-    applying, same as this module's cloud-init caveats.
+    got pods evicted. sbs_volume (Scaleway Block Storage) is used because
+    the provider rejects the legacy b_ssd type ("b_ssd volumes are not
+    supported anymore") and it's the type that takes an explicit size.
+    UNVERIFIED how the provider applies this to the EXISTING servers (in-place
+    resize vs. forced replacement) — read `terraform plan` carefully before
+    applying, especially for the control-plane.
   EOT
   type        = number
   default     = 40
@@ -167,7 +168,7 @@ resource "scaleway_instance_server" "control_plane" {
   enable_dynamic_ip = true # unlike hcloud_server, Scaleway servers get no public IP by default
 
   root_volume {
-    volume_type = "b_ssd"
+    volume_type = "sbs_volume"
     size_in_gb  = var.root_volume_gb
   }
 
@@ -205,7 +206,7 @@ resource "scaleway_instance_server" "agent" {
   enable_dynamic_ip = true # unlike hcloud_server, Scaleway servers get no public IP by default
 
   root_volume {
-    volume_type = "b_ssd"
+    volume_type = "sbs_volume"
     size_in_gb  = var.root_volume_gb
   }
 
