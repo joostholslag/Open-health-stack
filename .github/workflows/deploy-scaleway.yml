@@ -47,11 +47,16 @@
 #     list(string) var expects.
 # Repository variables (Settings → Secrets and variables → Actions → Variables):
 #   TF_DOMAIN, TF_LETSENCRYPT_EMAIL — same values as your local terraform.tfvars.
+#   DEPLOY_BRANCH — which branch auto-deploys on push (e.g. main). GitHub
+#     Actions can't put an expression inside `on:`, so every push (matching
+#     the paths below) starts this workflow; the `deploy` job then no-ops
+#     unless its ref matches this variable. Change branches by editing this
+#     variable, not the workflow file. Unset = never auto-deploys (fails
+#     closed); workflow_dispatch always runs regardless of this variable.
 name: deploy-scaleway
 
 on:
   push:
-    branches: [main]
     paths:
       - "terraform/envs/scaleway/**"
       - "terraform/modules/**"
@@ -64,6 +69,7 @@ env:
 
 jobs:
   deploy:
+    if: github.ref_name == vars.DEPLOY_BRANCH || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: scaleway
     steps:
