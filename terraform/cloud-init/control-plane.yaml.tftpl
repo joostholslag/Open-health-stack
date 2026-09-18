@@ -8,6 +8,18 @@ package_update: true
 packages:
   - curl
 
+write_files:
+  # Image GC thresholds (kubelet defaults are 85/80). k3s v1.36's kubelet no
+  # longer accepts --image-gc-*-threshold-percent as flags ("unknown flag"),
+  # so they go in a kubelet config drop-in that k3s loads from this dir.
+  - path: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+    permissions: "0644"
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      imageGCHighThresholdPercent: 70
+      imageGCLowThresholdPercent: 60
+
 runcmd:
   # Bring up the Hetzner private-network NIC. The hcloud cloud-init datasource only
   # emits netplan config for the PUBLIC interface (eth0), so ${flannel_iface} exists
@@ -77,9 +89,7 @@ runcmd:
         --advertise-address=${node_ip} \
         --flannel-iface=${flannel_iface} \
         --tls-san=$PUBLIC_IP \
-        --write-kubeconfig-mode=0644 \
-        --kubelet-arg=image-gc-high-threshold-percent=70 \
-        --kubelet-arg=image-gc-low-threshold-percent=60
+        --write-kubeconfig-mode=0644
   # Signal readiness — Terraform's remote-exec polls for this file before it
   # pulls the kubeconfig.
   - until k3s kubectl get nodes >/dev/null 2>&1; do sleep 5; done

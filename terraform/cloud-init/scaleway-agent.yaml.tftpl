@@ -9,6 +9,18 @@ package_update: true
 packages:
   - curl
 
+write_files:
+  # Image GC thresholds (kubelet defaults are 85/80). k3s v1.36's kubelet no
+  # longer accepts --image-gc-*-threshold-percent as flags ("unknown flag"),
+  # so they go in a kubelet config drop-in that k3s loads from this dir.
+  - path: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+    permissions: "0644"
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      imageGCHighThresholdPercent: 70
+      imageGCLowThresholdPercent: 60
+
 runcmd:
   - |
     PUBLIC_IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
@@ -52,8 +64,6 @@ runcmd:
       sh -s - agent \
         --kubelet-arg=cloud-provider=external \
         --node-ip=$NODE_IP \
-        --flannel-iface=$PRIVATE_IFACE \
-        --kubelet-arg=image-gc-high-threshold-percent=70 \
-        --kubelet-arg=image-gc-low-threshold-percent=60
+        --flannel-iface=$PRIVATE_IFACE
   - until systemctl is-active --quiet k3s-agent; do sleep 5; done
   - touch /tmp/k3s-ready
