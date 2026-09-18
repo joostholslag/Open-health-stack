@@ -43,6 +43,8 @@
 #     changing).
 # Repository variables (Settings → Secrets and variables → Actions → Variables):
 #   TF_DOMAIN, TF_LETSENCRYPT_EMAIL — same values as your local terraform.tfvars.
+#   TF_ADMIN_SSH_CIDRS — REQUIRED, same value as admin_ssh_cidrs in your local
+#     terraform.tfvars, as a JSON list (e.g. ["203.0.113.4/32"]).
 name: deploy-scaleway
 
 on:
@@ -95,4 +97,5 @@ jobs:
           TF_VAR_kubeconfig_path: ./kubeconfig
           TF_VAR_domain: ${{ vars.TF_DOMAIN }}
           TF_VAR_letsencrypt_email: ${{ vars.TF_LETSENCRYPT_EMAIL }}
+          TF_VAR_admin_ssh_cidrs: ${{ vars.TF_ADMIN_SSH_CIDRS }}
         run: terraform apply -input=false -auto-approve
