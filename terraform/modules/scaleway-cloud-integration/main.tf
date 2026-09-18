@@ -68,6 +68,21 @@ resource "helm_release" "scaleway_csi" {
     value = kubernetes_secret.scaleway.metadata[0].name
   }
 
+  # node DaemonSet ships with tolerations: [] by default, so it needs this
+  # explicitly to still run on the tainted control-plane (--node-taint).
+  set {
+    name  = "node.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "node.tolerations[0].value"
+    value = "true"
+  }
+  set {
+    name  = "node.tolerations[0].effect"
+    value = "NoExecute"
+  }
+
   depends_on = [kubernetes_secret.scaleway]
 }
 
