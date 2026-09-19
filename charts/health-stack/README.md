@@ -73,17 +73,6 @@ every service client). An edge gate would double-validate the same token for
 no gain. The engine's `/health`, `/status` and swagger stay `permitAll`, so
 kubelet probes are unaffected.
 
-`/ehrbase` additionally passes through an OPA-backed PEP before it ever
-reaches EHRbase: the `ehrbase` Pod runs three containers (`ehrbase-gateway`,
-`opa`, `ehrbase`), and the `ehrbase` Service targets the gateway, not the CDR
-container directly (see [`templates/ehrbase.yaml`](templates/ehrbase.yaml) and
-[`config/ehrbase-gateway-nginx.conf`](config/ehrbase-gateway-nginx.conf)). This
-is transparent to callers — HAPI and openFHIR reach the same Service and see
-no config difference — and today only mirrors EHRbase's own USER/ADMIN check
-(see [`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego)
-for the extension point). The table above still lists `/ehrbase` as "validates
-natively" because that native check is unchanged and still the final word.
-
 The canonical issuer is the **public** URL `https://<ingress.host>/auth/realms/freshehr`
 (`KC_HOSTNAME`): every token carries it, and EHRbase/oauth2-proxy fetch OIDC
 discovery through the LB (they crash-loop harmlessly until Keycloak + DNS are

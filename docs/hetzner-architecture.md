@@ -81,11 +81,7 @@ flowchart TB
 
     subgraph wl["Workloads"]
       hapi["<b>hapi</b> Deployment<br/>HAPI FHIR + interceptor JAR<br/>replicas: 2 <i>(values-hetzner)</i>"]
-      subgraph ehrpod["<b>ehrbase</b> Deployment — Pod: 3 containers<br/>replicas: 1"]
-        ehrgw["ehrbase-gateway<br/>OpenResty PEP"]
-        opa["opa<br/>policy decision"]
-        ehr["ehrbase<br/>openEHR CDR (OAuth2 resource server)"]
-      end
+      ehr["<b>ehrbase</b> Deployment<br/>openEHR CDR (OAuth2 resource server)<br/>replicas: 1"]
       of["<b>openfhir</b> Deployment<br/>engine, OAuth2 resource server (per-API scopes)<br/>+ bootstrap initContainer · replicas: 1"]
       kc["<b>keycloak</b> Deployment<br/>OIDC IdP, realm freshehr (--import-realm)<br/>replicas: 1"]
       o2p["<b>oauth2-proxy</b> Deployment<br/>edge Bearer validator (auth-url on /fhir)<br/>replicas: 1"]
@@ -99,29 +95,24 @@ flowchart TB
     end
   end
 
-  ing --> hapi & ehrgw & of & kc
+  ing --> hapi & ehr & of & kc
   ing -.->|auth-url /fhir| o2p
   o2p -.->|validate JWT| kc
   hapi -->|Bearer hapi-svc| of
-  hapi -->|Bearer hapi-svc| ehrgw
-  ehrgw -.->|HTTP| opa
-  ehrgw --> ehr
-  of --> ehrgw
+  hapi -->|Bearer hapi-svc| ehr
+  of --> ehr
   hapi & ehr & of & kc --> pg
   ngx --> ing
 
   style pg fill:#4a2a4a,stroke:#a96aa9,color:#fff
   style wl fill:#1e3a5f,stroke:#4a90d9,color:#fff
   style sys fill:#3d3d2a,stroke:#b0b04a,color:#fff
-  style ehrpod fill:#5a3a1a,stroke:#d98c3f,color:#fff
 ```
 
 **6 app pods + 1 database pod** on Hetzner (hapi runs 2 replicas there; the chart
 default is 1; keycloak and oauth2-proxy add one each). The add-ons (ingress-nginx,
 cert-manager, CCM, CSI) add a handful more in `ingress-nginx`, `cert-manager` and
-`hcloud-system` namespaces. The pod count doesn't change with the gateway/opa
-sidecars above — the `ehrbase` pod just grew from 1 container to 3, sharing that
-one pod's network namespace (localhost between them, no extra Service).
+`hcloud-system` namespaces.
 
 **One Postgres, four databases.** All services share the single `postgres`
 StatefulSet — `jdbc:postgresql://postgres:5432/{ehrbase,hapi,openfhir,keycloak}`.
@@ -142,8 +133,7 @@ client → DNS(health.example.com) → LB public IP
       → [auth-url subrequest on /fhir]   ← oauth2-proxy validates the Bearer JWT
       → hapi Service → hapi pod :8080
       → (IPS bundle) → openfhir Service → openfhir pod   (engine validates its own hapi-svc token natively, scope openfhir.map)
-      → ehrbase Service → ehrbase pod, ehrbase-gateway container :8090  (OPA check: POST /v1/data over localhost)
-      → ehrbase pod, ehrbase container :8080 (if allow)  (EHRbase ALSO validates the token natively)
+      → ehrbase Service → ehrbase pod    (EHRbase validates the token natively)
       → postgres Service :5432
 
 token fetch: client → https://<domain>/auth/realms/freshehr/.../token → keycloak pod

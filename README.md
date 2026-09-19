@@ -42,11 +42,7 @@ flowchart LR
     end
     kc[Keycloak<br/>realm freshehr]
     openfhir[openFHIR engine<br/>OAuth2 resource server<br/>per-API scopes]
-    subgraph ehrbasepod[ehrbase Pod]
-        ehrbase_gw[ehrbase-gateway<br/>OpenResty + OPA-check]
-        opa[opa]
-        ehrbase[EHRbase CDR<br/>OAuth2 resource server]
-    end
+    ehrbase[EHRbase CDR<br/>OAuth2 resource server]
     hades[hades terminology server<br/>SNOMED CT · LOINC · FHIR packages]
     pg[(Postgres<br/>ehrbase · hapi · openfhir · keycloak)]
 
@@ -54,15 +50,13 @@ client -->|/fhir /ehrbase /openfhir /terminology /auth|nginx
 nginx -->|"/fhir (edge auth)"|hapi
 nginx -.->|auth_request|o2p
 o2p -.->|validate JWT|kc
-nginx -->|"/ehrbase (native auth)"|ehrbase_gw
+nginx -->|"/ehrbase (native auth)"|ehrbase
 nginx -->|"/openfhir (native auth)"|openfhir
 nginx -->|"/terminology (edge auth, prefix strip)"|hades
 nginx -->|/auth|kc
 hapi -->|"EPS create/query<br/>Bearer hapi-svc, scope openfhir.map"|openfhir
-hapi -->|"openEHR REST<br/>Bearer hapi-svc"|ehrbase_gw
-openfhir -->|openEHR REST|ehrbase_gw
-ehrbase_gw -.->|"POST /v1/data (HTTP)"|opa
-ehrbase_gw -->|"if allow"|ehrbase
+hapi -->|"openEHR REST<br/>Bearer hapi-svc"|ehrbase
+openfhir -->|openEHR REST|ehrbase
 hapi --- pg
 ehrbase --- pg
 openfhir --- pg
