@@ -39,6 +39,7 @@ metadata:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "hades") | nindent 4 }}
 spec:
   replicas: {{ .Values.hades.replicas }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   strategy:
     type: Recreate
   selector:

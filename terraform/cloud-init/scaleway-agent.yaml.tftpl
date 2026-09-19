@@ -9,6 +9,18 @@ package_update: true
 packages:
   - curl
 
+write_files:
+  # Image GC thresholds (kubelet defaults are 85/80). k3s v1.36's kubelet no
+  # longer accepts --image-gc-*-threshold-percent as flags ("unknown flag"),
+  # so they go in a kubelet config drop-in that k3s loads from this dir.
+  - path: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+    permissions: "0644"
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      imageGCHighThresholdPercent: 70
+      imageGCLowThresholdPercent: 60
+
 runcmd:
   - |
     PUBLIC_IFACE=$(ip -o -4 route show default | awk '{print $5}' | head -n1)
@@ -39,6 +51,12 @@ runcmd:
     done
     [ -n "$NODE_IP" ] || { echo "FATAL: could not determine private IPv4 on $PRIVATE_IFACE" >&2; exit 1; }
 
+    # kubelet's own defaults (85% high / 80% low) don't start reclaiming
+    # unused container images until disk usage is already within a few
+    # percent of the DiskPressure eviction threshold — fine on a big disk,
+    # but on a small node it leaves almost no margin between "start
+    # collecting garbage" and "start evicting pods". Lowered so image GC
+    # kicks in with real headroom to spare.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_URL="${server_url}" \

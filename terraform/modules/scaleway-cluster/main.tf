@@ -32,6 +32,26 @@ variable "private_network_id" { type = string }
 variable "network_cidr" { type = string }
 variable "kubeconfig_path" { type = string }
 
+variable "root_volume_gb" {
+  description = <<-EOT
+    Root disk size for both control-plane and agent nodes, in GB.
+    Neither scaleway_instance_server resource below set an explicit
+    root_volume block before this — Scaleway then picks its own default,
+    which on a DEV1-L in this environment's testing turned out to be a
+    ~9GB disk. That's tight enough for k3s + this stack's several
+    Deployments that a couple of rolling upgrades (each briefly running
+    two image generations at once) pushed a node into DiskPressure and
+    got pods evicted. sbs_volume (Scaleway Block Storage) is used because
+    the provider rejects the legacy b_ssd type ("b_ssd volumes are not
+    supported anymore") and it's the type that takes an explicit size.
+    UNVERIFIED how the provider applies this to the EXISTING servers (in-place
+    resize vs. forced replacement) — read `terraform plan` carefully before
+    applying, especially for the control-plane.
+  EOT
+  type        = number
+  default     = 40
+}
+
 variable "ssh_private_key_path" {
   description = "Private key matching ssh_public_key_path, used to fetch the kubeconfig. Defaults to the public key path minus .pub."
   type        = string
@@ -147,6 +167,11 @@ resource "scaleway_instance_server" "control_plane" {
   security_group_id = scaleway_instance_security_group.this.id
   enable_dynamic_ip = true # unlike hcloud_server, Scaleway servers get no public IP by default
 
+  root_volume {
+    volume_type = "sbs_volume"
+    size_in_gb  = var.root_volume_gb
+  }
+
   user_data = {
     "cloud-init" = templatefile("${path.module}/../../cloud-init/scaleway-control-plane.yaml.tftpl", {
       k3s_version  = var.k3s_version
@@ -179,6 +204,11 @@ resource "scaleway_instance_server" "agent" {
   zone              = var.zone
   security_group_id = scaleway_instance_security_group.this.id
   enable_dynamic_ip = true # unlike hcloud_server, Scaleway servers get no public IP by default
+
+  root_volume {
+    volume_type = "sbs_volume"
+    size_in_gb  = var.root_volume_gb
+  }
 
   # The control-plane is already created by the time this resource is
   # applied (depends_on below), so its private_ips[0].address is a real,

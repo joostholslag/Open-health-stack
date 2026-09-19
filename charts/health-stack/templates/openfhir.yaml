@@ -11,6 +11,7 @@ metadata:
     {{- include "health-stack.componentLabels" (dict "ctx" . "name" "openfhir") | nindent 4 }}
 spec:
   replicas: {{ .Values.openfhir.replicas }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       {{- include "health-stack.selectorLabels" (dict "name" "openfhir") | nindent 6 }}

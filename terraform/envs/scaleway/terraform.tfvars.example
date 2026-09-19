@@ -20,6 +20,10 @@ control_plane_type = "DEV1-M"
 agent_type         = "DEV1-L"
 agent_count        = 2
 image              = "ubuntu_jammy"
+# Scaleway's own default root disk on a DEV1-L was observed at ~9GB — tight
+# enough that a run of chart upgrades can trigger DiskPressure evictions.
+# 40GB leaves real headroom; bump further if agent_count/agent_type grows.
+root_volume_gb = 40
 
 # ── Access ───────────────────────────────────────────────────────────────────
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"

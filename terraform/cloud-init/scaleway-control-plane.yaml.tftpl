@@ -17,6 +17,18 @@ package_update: true
 packages:
   - curl
 
+write_files:
+  # Image GC thresholds (kubelet defaults are 85/80). k3s v1.36's kubelet no
+  # longer accepts --image-gc-*-threshold-percent as flags ("unknown flag"),
+  # so they go in a kubelet config drop-in that k3s loads from this dir.
+  - path: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+    permissions: "0644"
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      imageGCHighThresholdPercent: 70
+      imageGCLowThresholdPercent: 60
+
 runcmd:
   # Find the public (default-route) interface, then the private one (the
   # other ethernet NIC). Bring the private one up via DHCP if it isn't
@@ -69,6 +81,10 @@ runcmd:
 
     echo "$NODE_IP" > /tmp/node-ip
     # k3s doesn't taint control-plane by default; keeps app workloads off it.
+    # Image GC thresholds are lowered from kubelet's 85/80 defaults so unused
+    # images are reclaimed with real margin before DiskPressure eviction. The
+    # control-plane is tainted so it runs few images, but the same setting is
+    # applied on every node for consistency.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_TOKEN="${k3s_token}" \

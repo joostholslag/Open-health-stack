@@ -24,6 +24,14 @@ namespace:
   create: false
   name: health-stack
 
+# Kubernetes' own default (10) keeps 10 old ReplicaSets per Deployment around
+# after a rollout — each one still referencing its old container image, which
+# keeps that image ineligible for kubelet's image garbage collection. On a
+# small node disk, a run of upgrades (each briefly running two image
+# generations at once) can accumulate enough of these to trigger DiskPressure
+# and pod evictions unrelated to anything actually wrong with the workload.
+revisionHistoryLimit: 3
+
 # ── Storage ──────────────────────────────────────────────────────────────────
 # Postgres PVCs use this class. "" = cluster default (kind/dev).
 #   hetzner: hcloud-volumes  (other clouds: e.g. gp3 on EKS, managed-csi on AKS)

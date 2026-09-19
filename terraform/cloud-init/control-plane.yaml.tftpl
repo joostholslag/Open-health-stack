@@ -8,6 +8,18 @@ package_update: true
 packages:
   - curl
 
+write_files:
+  # Image GC thresholds (kubelet defaults are 85/80). k3s v1.36's kubelet no
+  # longer accepts --image-gc-*-threshold-percent as flags ("unknown flag"),
+  # so they go in a kubelet config drop-in that k3s loads from this dir.
+  - path: /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+    permissions: "0644"
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      imageGCHighThresholdPercent: 70
+      imageGCLowThresholdPercent: 60
+
 runcmd:
   # Bring up the Hetzner private-network NIC. The hcloud cloud-init datasource only
   # emits netplan config for the PUBLIC interface (eth0), so ${flannel_iface} exists
@@ -58,6 +70,12 @@ runcmd:
       sleep 2
     done
     [ -n "$PUBLIC_IP" ] || { echo "FATAL: could not determine public IPv4 from metadata service" >&2; exit 1; }
+    # kubelet's own defaults (85% high / 80% low) don't start reclaiming
+    # unused container images until disk usage is already within a few
+    # percent of the DiskPressure eviction threshold — this node's cx-line
+    # disk is much bigger than Scaleway's default, so it isn't urgent here,
+    # but it's the same latent gap: enough upgrade cycles (each briefly
+    # running two image generations at once) will eventually reach it too.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_CHANNEL="${k3s_version}" \
       K3S_TOKEN="${k3s_token}" \
