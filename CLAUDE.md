@@ -45,8 +45,6 @@ Compose and chart MUST declare the same tag for shared components;
 | eps-mappings     | —                                  | `charts/health-stack/values.yaml:103` + `values-hetzner.yaml:52` | team image on `ghcr.io/freshehrteam`; same explicit-tag rule as hapi (pushed) |
 | hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
 | hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:110` + `values-hetzner.yaml:55` | team image `ghcr.io/freshehrteam/hades`; same explicit-tag rule as hapi (pushed) |
-| ehrbase-gateway (PEP) | `docker/docker-compose.yml:144`| `charts/health-stack/values.yaml:254` | `openresty/openresty`; fronts EHRbase on the `ehrbase` DNS name / Service, consults OPA before proxying to `ehrbase-backend` / the sidecar EHRbase container |
-| opa (PDP)        | `docker/docker-compose.yml:164`    | `charts/health-stack/values.yaml:263`| `openpolicyagent/opa`; policy at `docker/opa/policies/ehrbase/authz.rego` (compose) / `charts/health-stack/config/ehrbase-gateway-authz.rego` (chart) — kept in sync BY HAND, same pattern as the Keycloak realm JSON |
 
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
@@ -75,14 +73,6 @@ Compose and chart MUST declare the same tag for shared components;
   both. To pick up realm changes: compose = `make destroy` (volume wipe);
   live cluster = the runbook in `charts/health-stack/README.md`
   ("Runbook: updating the realm on a LIVE cluster").
-- **The EHRbase OPA gateway (nginx.conf + authz.rego) is duplicated across
-  layers** — `docker/ehrbase-gateway/nginx.conf` + `docker/opa/policies/ehrbase/authz.rego`
-  (compose) vs `charts/health-stack/config/ehrbase-gateway-nginx.conf` +
-  `ehrbase-gateway-authz.rego` (chart) — synced BY HAND like the realm JSON;
-  edit both. The gateway must return 401 (no `Authorization` header) vs 403
-  (header present, OPA denies) — `make smoke`'s auth matrix asserts 401 bare
-  on `ehrbase/rest/status`, and a gateway that collapses both cases to 403
-  breaks that check.
 - **The interceptor JAR is compiled against a specific HAPI FHIR library
   version** (its deps are `provided`-scope, so they bind to whatever the HAPI
   base image ships at runtime). Keep `ARG INTERCEPTOR_VERSION` compatible with
