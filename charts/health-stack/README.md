@@ -88,8 +88,11 @@ a `(user_role, template_id, operation)` allowlist in
 ported from [jorritspee/openEHRxNuts#14](https://github.com/jorritspee/openEHRxNuts/pull/14).
 Two demo persona roles exercise it end-to-end — `dokter` (granted READ on the
 `EPS Patient Summary` template) and `verpleegkundige` (deliberately not
-granted, so it gets denied there) — via the `dokter-joost`/`verpleegkundige-bas`
-service-account clients in `realm-freshehr.json`. See
+granted, so it gets denied there) — held by the real interactive Keycloak
+users `dokter-joost`/`verpleegkundige-bas` in `realm-freshehr.json` (nictiz-ui
+logs these in through its own client; the realm's `verify-cli` public client
+exists only so `scripts/verify.sh` can fetch a token for them without a
+browser). See
 [`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego) for
 the rule and its extension point for other resources/operations, which is
 still just USER/ADMIN today. The table above still lists `/ehrbase` as

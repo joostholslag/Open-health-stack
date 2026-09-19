@@ -154,13 +154,14 @@ secrets:
       OPENFHIR_DB_PASS: openfhir
     # Keycloak + oauth2-proxy credentials. Placeholders for dev (secrets.create=true)
     # ONLY — Terraform overrides every one of these with generated values on Hetzner.
-    # Every *_SECRET below is substituted into the realm import
+    # Every *_SECRET/*_PASSWORD below is substituted into the realm import
     # (config/realm-freshehr.json.tpl); API_CLIENT_SECRET, HAPI_SVC_SECRET and
     # OAUTH2_PROXY_CLIENT_SECRET are additionally handed to their in-cluster
-    # consumer Secrets so realm and consumers always agree. DOKTER_JOOST_SECRET
-    # and VERPLEEGKUNDIGE_BAS_SECRET have no in-cluster consumer — they're
-    # test-persona clients for the ehrbase-gateway's template-scoped READ
-    # allowlist (scripts/verify.sh calls them directly via client_credentials).
+    # consumer Secrets so realm and consumers always agree. DOKTER_JOOST_PASSWORD
+    # and VERPLEEGKUNDIGE_BAS_PASSWORD have no in-cluster consumer — they're the
+    # login password for the dokter-joost/verpleegkundige-bas test users
+    # (interactive Keycloak users nictiz-ui logs in via its own client;
+    # scripts/verify.sh fetches a token for them through the verify-cli client).
     keycloak:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -168,8 +169,8 @@ secrets:
       KC_DB_PASSWORD: keycloak
       API_CLIENT_SECRET: dev-api-client-secret
       HAPI_SVC_SECRET: dev-hapi-svc-secret
-      DOKTER_JOOST_SECRET: dev-dokter-joost-secret
-      VERPLEEGKUNDIGE_BAS_SECRET: dev-verpleegkundige-bas-secret
+      DOKTER_JOOST_PASSWORD: dev-dokter-joost-password
+      VERPLEEGKUNDIGE_BAS_PASSWORD: dev-verpleegkundige-bas-password
       OAUTH2_PROXY_CLIENT_SECRET: dev-oauth2-proxy-secret
       # Must be exactly 16, 24 or 32 bytes (oauth2-proxy cookie encryption).
       OAUTH2_PROXY_COOKIE_SECRET: 0123456789abcdef0123456789abcdef

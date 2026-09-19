@@ -160,60 +160,16 @@
       ]
     },
     {
-      "clientId": "dokter-joost",
-      "name": "Demo persona: Dokter Joost",
-      "description": "client_credentials service account demo persona carrying the dokter role, for testing the ehrbase-gateway's template-scoped READ allowlist end-to-end. Not a real clinician login — this stack has no interactive/password login flow yet (see this file's other clients), so this mirrors api-client/hapi-svc's machine-identity pattern.",
+      "clientId": "verify-cli",
+      "name": "scripts/verify.sh test-user login",
+      "description": "Public direct-access-grant client for scripts/verify.sh to log in as the dokter-joost/verpleegkundige-bas test users. nictiz-ui logs these users in via its own client — this exists only for the CLI test suite (ehrbase-gateway template-scoped READ check).",
       "enabled": true,
       "protocol": "openid-connect",
-      "publicClient": false,
-      "clientAuthenticatorType": "client-secret",
-      "secret": "__KC_DOKTER_JOOST_SECRET__",
-      "serviceAccountsEnabled": true,
+      "publicClient": true,
+      "serviceAccountsEnabled": false,
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "fullScopeAllowed": true,
-      "protocolMappers": [
-        {
-          "name": "oauth2-proxy-audience",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "consentRequired": false,
-          "config": {
-            "included.custom.audience": "oauth2-proxy",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "realm-roles",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-usermodel-realm-role-mapper",
-          "consentRequired": false,
-          "config": {
-            "claim.name": "realm_access.roles",
-            "jsonType.label": "String",
-            "multivalued": "true",
-            "access.token.claim": "true",
-            "id.token.claim": "false",
-            "userinfo.token.claim": "false"
-          }
-        }
-      ]
-    },
-    {
-      "clientId": "verpleegkundige-bas",
-      "name": "Demo persona: Verpleegkundige Bas",
-      "description": "client_credentials service account demo persona carrying the verpleegkundige role — same purpose and pattern as dokter-joost above, deliberately left off the EPS Patient Summary template grant in datasource.json to exercise the 403 path.",
-      "enabled": true,
-      "protocol": "openid-connect",
-      "publicClient": false,
-      "clientAuthenticatorType": "client-secret",
-      "secret": "__KC_VERPLEEGKUNDIGE_BAS_SECRET__",
-      "serviceAccountsEnabled": true,
-      "standardFlowEnabled": false,
-      "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "fullScopeAllowed": true,
       "protocolMappers": [
         {
@@ -290,22 +246,36 @@
       ]
     },
     {
-      "username": "service-account-dokter-joost",
+      "username": "dokter-joost",
       "enabled": true,
-      "serviceAccountClientId": "dokter-joost",
+      "emailVerified": true,
       "firstName": "Dokter",
       "lastName": "Joost",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__KC_DOKTER_JOOST_PASSWORD__",
+          "temporary": false
+        }
+      ],
       "realmRoles": [
         "USER",
         "dokter"
       ]
     },
     {
-      "username": "service-account-verpleegkundige-bas",
+      "username": "verpleegkundige-bas",
       "enabled": true,
-      "serviceAccountClientId": "verpleegkundige-bas",
+      "emailVerified": true,
       "firstName": "Verpleegkundige",
       "lastName": "Bas",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__KC_VERPLEEGKUNDIGE_BAS_PASSWORD__",
+          "temporary": false
+        }
+      ],
       "realmRoles": [
         "USER",
         "verpleegkundige"

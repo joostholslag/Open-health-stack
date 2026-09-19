@@ -75,18 +75,20 @@ admin_bare=$(curl -sk -o /dev/null -w '%{http_code}' "$EDGE/ehrbase/rest/admin/e
 assert_eq "OPA: bare request on /ehrbase/rest/admin/** is 401, not 403" 401 "$admin_bare"
 echo
 
-# ── 3c. Template-scoped READ (dokter-joost / verpleegkundige-bas personas) ───
+# ── 3c. Template-scoped READ (dokter-joost / verpleegkundige-bas test users) ─
 # Ported from jorritspee/openEHRxNuts#14's template-id + operation + user_role
 # allowlist (see charts/health-stack/config/ehrbase-gateway-authz.rego and its
 # datasource.json). The single-template GET is the only EHRbase endpoint that
 # names a template in its path, so it's the only one this v1 slice scopes:
 # the datasource grants "dokter" READ on EPS Patient Summary and deliberately
-# leaves "verpleegkundige" off it.
-dokter_token=$(fetch_persona_token "dokter-joost" "${KC_DOKTER_JOOST_SECRET:-dev-dokter-joost-secret}")
-verpleegkundige_token=$(fetch_persona_token "verpleegkundige-bas" "${KC_VERPLEEGKUNDIGE_BAS_SECRET:-dev-verpleegkundige-bas-secret}")
+# leaves "verpleegkundige" off it. dokter-joost/verpleegkundige-bas are real
+# Keycloak users (nictiz-ui logs them in via its own client); this fetches a
+# token for each via the public verify-cli client's direct-access-grant login.
+dokter_token=$(fetch_user_token "dokter-joost" "${KC_DOKTER_JOOST_PASSWORD:-dev-dokter-joost-password}")
+verpleegkundige_token=$(fetch_user_token "verpleegkundige-bas" "${KC_VERPLEEGKUNDIGE_BAS_PASSWORD:-dev-verpleegkundige-bas-password}")
 
 if [ -z "$dokter_token" ] || [ -z "$verpleegkundige_token" ]; then
-  fail "no token for dokter-joost/verpleegkundige-bas demo persona clients (is the stack up? make up / make destroy for a fresh realm import)"
+  fail "no token for dokter-joost/verpleegkundige-bas test users (is the stack up? make up / make destroy for a fresh realm import)"
 else
   eps_template_url="$EDGE/ehrbase/rest/openehr/v1/definition/template/adl1.4/EPS%20Patient%20Summary"
 
