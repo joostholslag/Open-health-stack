@@ -96,6 +96,24 @@ allow if {
 	template_read_allowed
 }
 
+# nictiz-ui's composition form fetches the web template with its OWN backend
+# service credential (nictiz-ui-svc, "node" in the gateway access log), not
+# the logged-in clinician's token — confirmed via a live 403 on Scaleway,
+# 2026-09-19. That means the dokter/verpleegkundige datasource allowlist
+# above can never apply to this call path: there is no individual user's
+# roles in play to scope by, only the shared service account's. Bypass it for
+# that account the same way it's already trusted for openFHIR's $purge — the
+# "admin" role. Deliberate trade-off, not a bug: any admin-role holder now
+# gets blanket template-definition READ regardless of template, and per-user
+# distinction on THIS endpoint only ever applies to a caller presenting its
+# own token directly (not routed through nictiz-ui's BFF). The other option
+# — nictiz-ui forwarding the clinician's own token for this fetch instead —
+# would restore real per-user scoping; revisit if that becomes feasible.
+allow if {
+	is_template_definition_path
+	"admin" in roles
+}
+
 # ── Extension point ──────────────────────────────────────────────────────────
 # Attribute-based rule, modeled after EHRbase's own (since-removed) ABAC design
 # — organization_id / patient_id JWT claims scoped to a resource. Requires

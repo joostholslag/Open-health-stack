@@ -92,10 +92,26 @@ granted, so it gets denied there) — held by the real interactive Keycloak
 users `dokter-joost`/`verpleegkundige-bas` in `realm-freshehr.json` (nictiz-ui
 logs these in through its own client; the realm's `verify-cli` public client
 exists only so `scripts/verify.sh` can fetch a token for them without a
-browser). See
-[`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego) for
-the rule and its extension point for other resources/operations, which is
-still just USER/ADMIN today. The table above still lists `/ehrbase` as
+browser).
+
+**Caveat confirmed live on Scaleway (2026-09-19):** nictiz-ui's composition
+form fetches the web template with its own backend service credential
+(`nictiz-ui-svc`, same `USER`+`admin` shape as `api-client`/`hapi-svc`), not
+the logged-in clinician's token — so the `dokter`/`verpleegkundige` allowlist
+can never apply to that call path; there's no individual user's roles in
+play there, only the shared service account's. `authz.rego` carries a third
+`allow` rule for the template-definition path that lets any `admin`-role
+holder through regardless of template, mirroring how `admin` already grants
+openFHIR's `$purge`. This is a deliberate trade-off, not a bug: any current
+or future holder of `admin` gets blanket template-definition READ, and
+per-user distinction on this one endpoint only actually applies to a caller
+presenting its own token directly (not routed through nictiz-ui's BFF).
+Restoring real per-clinician scoping there would mean nictiz-ui forwarding
+the individual user's own Bearer token for this fetch instead — not done.
+
+See [`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego)
+for the rules and the extension point for other resources/operations, which
+is still just USER/ADMIN today. The table above still lists `/ehrbase` as
 "validates natively" because that native check is unchanged and still the
 final word — the gateway only ever narrows what it allows.
 

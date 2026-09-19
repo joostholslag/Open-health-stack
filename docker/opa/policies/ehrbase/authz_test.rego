@@ -19,8 +19,12 @@ dokter_joost_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV
 # {"realm_access":{"roles":["USER","verpleegkundige"]}}
 verpleegkundige_bas_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOiB7InJvbGVzIjogWyJVU0VSIiwgInZlcnBsZWVna3VuZGlnZSJdfX0."
 
-# {"realm_access":{"roles":["USER","admin"]}} — the default api-client/hapi-svc shape
+# {"realm_access":{"roles":["USER","admin"]}} — the default api-client/hapi-svc
+# shape, and also nictiz-ui-svc's (see the "admin" bypass rule in authz.rego).
 plain_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOiB7InJvbGVzIjogWyJVU0VSIiwgImFkbWluIl19fQ."
+
+# {"realm_access":{"roles":["USER"]}} — USER but no admin/dokter/verpleegkundige.
+user_only_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOiB7InJvbGVzIjogWyJVU0VSIl19fQ."
 
 # {"realm_access":{"roles":["ADMIN"]}}
 admin_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOiB7InJvbGVzIjogWyJBRE1JTiJdfX0."
@@ -35,11 +39,19 @@ test_verpleegkundige_denied_eps_template if {
 	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": verpleegkundige_bas_token}
 }
 
-test_plain_user_denied_eps_template if {
-	# USER alone (no dokter/verpleegkundige) must NOT fall through to the
-	# generic USER allow — the template-definition endpoint is a strict
+test_user_only_denied_eps_template if {
+	# USER alone (no admin/dokter/verpleegkundige) must NOT fall through to
+	# the generic USER allow — the template-definition endpoint is a strict
 	# addition on top of that baseline, never a relaxation of it.
-	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": plain_user_token}
+	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": user_only_token}
+}
+
+test_admin_role_allowed_eps_template if {
+	# nictiz-ui's composition form fetches the web template with its own
+	# backend service credential (USER+admin, same shape as api-client/
+	# hapi-svc), never the clinician's own token — see the "admin" bypass
+	# rule's comment in authz.rego for why this is a deliberate trade-off.
+	authz.allow with input as {"method": "GET", "path": eps_template_path, "token": plain_user_token}
 }
 
 test_plain_user_allowed_template_list if {
