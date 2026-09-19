@@ -253,6 +253,27 @@ ehrbase:
   service:
     type: ClusterIP
     port: 8080
+  # ── PEP gateway + OPA (sidecars in the same Pod, see templates/ehrbase.yaml) ─
+  # The ehrbase Service targets gateway.port, not the real ehrbase container's
+  # 8080 — all three containers share the Pod's network namespace, so the
+  # gateway reaches `opa` and `ehrbase` over localhost with no extra Service.
+  gateway:
+    image:
+      repository: openresty/openresty
+      # Pinned to match docker/docker-compose.yml's ehrbase-gateway service.
+      tag: 1.25.3.2-alpine
+      pullPolicy: IfNotPresent
+    # 8090, not 8080: that port belongs to the `ehrbase` container in this Pod.
+    port: 8090
+    resources: {}
+  opa:
+    image:
+      repository: openpolicyagent/opa
+      # Pinned to match docker/docker-compose.yml's opa service.
+      tag: "0.70.0"
+      pullPolicy: IfNotPresent
+    port: 8181
+    resources: {}
 
 # ── openFHIR engine ──────────────────────────────────────────────────────────
 openfhir:
