@@ -142,3 +142,13 @@ clean start, `make verify`, UI `stack:verify`, report.
   (`terraform/modules/k8s-apps/main.tf`).
 - Stack e2e stays local-only (CI builds images and lints the chart, but the
   full compose e2e needs the gitignored license/JAR).
+- **Add IPv6 to the Scaleway nodes, in terraform.** `scaleway-cluster`
+  declares no public IPs at all — both `control_plane` and `agent` rely on
+  `enable_dynamic_ip = true` (`terraform/modules/scaleway-cluster/main.tf`),
+  so there is no `scaleway_instance_ip` to hang an IPv6 off. Attaching one by
+  hand does NOT work: the next `terraform apply` reads it into state, sees no
+  matching config, and tries to detach it — which fails
+  (`precondition failed: No reservation for ip …`) and blocks every
+  subsequent apply, including the helm_release update. Do it properly:
+  a `scaleway_instance_ip` with `type = "routed_ipv6"` + `ip_ids` on the
+  server, and `terraform import` any IP that already exists.
