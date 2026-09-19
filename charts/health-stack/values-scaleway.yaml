@@ -18,6 +18,17 @@
 storage:
   className: scw-bssd
 
+# EHRbase Admin API (hard-delete of EHRs/compositions/templates, bypassing the
+# normal openEHR versioning/audit-trail guarantees) — Scaleway-only, NOT set
+# for Hetzner (values-hetzner.yaml) or compose. Gated by both the OPA/PEP
+# gateway and EHRbase's own native SECURITY_OAUTH2ADMINROLE check (see
+# docker/opa/policies/ehrbase/authz.rego); no client/user in
+# realm-freshehr.json currently holds the ADMIN role, so this alone grants
+# nobody access — a separate realm change is needed to actually use it.
+ehrbase:
+  env:
+    ADMIN_API_ACTIVE: "true"
+
 ingress:
   # Replace with your real DNS (must resolve to the Scaleway load balancer IP).
   host: health.example.com

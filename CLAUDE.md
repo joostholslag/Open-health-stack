@@ -69,6 +69,16 @@ Compose and chart MUST declare the same tag for shared components;
 - **Bump `charts/health-stack/Chart.yaml` `version:` on EVERY chart change** —
   terraform's helm provider only re-renders when that version changes;
   without a bump `terraform apply` silently reports "No changes".
+- **EHRbase Admin API (`ADMIN_API_ACTIVE`) is Scaleway-only.** Set in
+  `charts/health-stack/values-scaleway.yaml` ehrbase.env; deliberately absent
+  from `values-hetzner.yaml`, `values.yaml`, and `docker/docker-compose.yml`
+  (default is disabled — the endpoints 404 without it). `/rest/admin/**` lets
+  a caller hard-delete EHRs/compositions/templates, bypassing openEHR's
+  normal versioning/audit-trail guarantees, so keep it off everywhere it
+  isn't explicitly needed. It's gated by both the OPA/PEP gateway and
+  EHRbase's own native `SECURITY_OAUTH2ADMINROLE` check, and currently no
+  client/user in `realm-freshehr.json` holds the `ADMIN` role — granting that
+  role is a separate, deliberate step.
 - **Keycloak `--import-realm` never updates an existing realm.** The realm
   JSON is duplicated in `docker/keycloak/realm-freshehr.json` AND
   `charts/health-stack/config/realm-freshehr.json.tpl` — synced BY HAND; edit
