@@ -78,11 +78,6 @@ row oauth2-proxy  "oauth2-proxy/oauth2-proxy"    "quay.io/oauth2-proxy/oauth2-pr
 # hades is a team image shared by both layers (compose ${HADES_IMAGE:-...}
 # default vs chart images.hades) — the tags must agree like any shared pin.
 row hades         "freshehrteam/hades"           "ghcr.io/freshehrteam/hades"
-# EHRbase-fronting OPA PEP gateway (compose: separate ehrbase-gateway/opa
-# services; chart: sidecars in the ehrbase Pod, values.yaml ehrbase.gateway/
-# ehrbase.opa) — same shared-pin rule as every other cross-layer component.
-row gateway         "openresty/openresty"        "openresty/openresty"
-row opa             "openpolicyagent/opa"        "openpolicyagent/opa"
 
 # Components that exist in only one layer — informational, no match check:
 # - hapi: compose builds locally FROM the Dockerfile pin; the chart pulls the
