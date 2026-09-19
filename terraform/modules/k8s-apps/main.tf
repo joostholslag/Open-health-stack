@@ -70,6 +70,17 @@ variable "kc_hapi_svc_secret" {
   type      = string
   sensitive = true
 }
+# Demo persona clients (dokter-joost / verpleegkundige-bas) for the
+# ehrbase-gateway's template-scoped READ allowlist — same client_credentials
+# pattern as kc_api_client_secret/kc_hapi_svc_secret above.
+variable "kc_dokter_joost_secret" {
+  type      = string
+  sensitive = true
+}
+variable "kc_verpleegkundige_bas_secret" {
+  type      = string
+  sensitive = true
+}
 variable "oauth2_proxy_client_secret" {
   type      = string
   sensitive = true
@@ -234,6 +245,14 @@ resource "helm_release" "health_stack" {
   set_sensitive {
     name  = "secrets.values.keycloak.HAPI_SVC_SECRET"
     value = var.kc_hapi_svc_secret
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.DOKTER_JOOST_SECRET"
+    value = var.kc_dokter_joost_secret
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.VERPLEEGKUNDIGE_BAS_SECRET"
+    value = var.kc_verpleegkundige_bas_secret
   }
   set_sensitive {
     name  = "secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET"

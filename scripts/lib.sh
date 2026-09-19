@@ -31,6 +31,18 @@ require_token() {
   [ -n "$TOKEN" ] || { echo "FATAL: no token from Keycloak at $KEYCLOAK (is the stack up? make up)"; exit 1; }
 }
 
+# Token for one of the dokter-joost/verpleegkundige-bas demo persona clients
+# (docker/keycloak/realm-freshehr.json) — no openfhir/opt/fc scopes requested,
+# these clients don't have any optionalClientScopes.
+# fetch_persona_token <client_id> <client_secret>
+fetch_persona_token() {
+  curl -sS -X POST "$KEYCLOAK/auth/realms/freshehr/protocol/openid-connect/token" \
+    -d grant_type=client_credentials \
+    -d client_id="$1" \
+    -d client_secret="$2" \
+  | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
+}
+
 pass() { printf '  PASS  %s\n' "$*"; }
 
 fail() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }

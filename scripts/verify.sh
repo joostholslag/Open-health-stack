@@ -75,6 +75,32 @@ admin_bare=$(curl -sk -o /dev/null -w '%{http_code}' "$EDGE/ehrbase/rest/admin/e
 assert_eq "OPA: bare request on /ehrbase/rest/admin/** is 401, not 403" 401 "$admin_bare"
 echo
 
+# ── 3c. Template-scoped READ (dokter-joost / verpleegkundige-bas personas) ───
+# Ported from jorritspee/openEHRxNuts#14's template-id + operation + user_role
+# allowlist (see charts/health-stack/config/ehrbase-gateway-authz.rego and its
+# datasource.json). The single-template GET is the only EHRbase endpoint that
+# names a template in its path, so it's the only one this v1 slice scopes:
+# the datasource grants "dokter" READ on EPS Patient Summary and deliberately
+# leaves "verpleegkundige" off it.
+dokter_token=$(fetch_persona_token "dokter-joost" "${KC_DOKTER_JOOST_SECRET:-dev-dokter-joost-secret}")
+verpleegkundige_token=$(fetch_persona_token "verpleegkundige-bas" "${KC_VERPLEEGKUNDIGE_BAS_SECRET:-dev-verpleegkundige-bas-secret}")
+
+if [ -z "$dokter_token" ] || [ -z "$verpleegkundige_token" ]; then
+  fail "no token for dokter-joost/verpleegkundige-bas demo persona clients (is the stack up? make up / make destroy for a fresh realm import)"
+else
+  eps_template_url="$EDGE/ehrbase/rest/openehr/v1/definition/template/adl1.4/EPS%20Patient%20Summary"
+
+  dokter_code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $dokter_token" "$eps_template_url")
+  assert_eq "OPA: dokter-joost READ on EPS Patient Summary template -> 200" 200 "$dokter_code"
+
+  verpleegkundige_code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $verpleegkundige_token" "$eps_template_url")
+  assert_eq "OPA: verpleegkundige-bas READ on EPS Patient Summary template -> 403" 403 "$verpleegkundige_code"
+
+  eps_template_bare=$(curl -sk -o /dev/null -w '%{http_code}' "$eps_template_url")
+  assert_eq "OPA: bare request on EPS Patient Summary template -> 401" 401 "$eps_template_bare"
+fi
+echo
+
 # ── 4. openFHIR mapping state (freshehr tenant) ──────────────────────────────
 # The engine's own STARTUP bootstrap writes under an internal tenant that is
 # invisible to freshehr callers; only `make bootstrap` loads the visible set.

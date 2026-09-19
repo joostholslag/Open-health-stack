@@ -32,6 +32,43 @@ roles := claims.realm_access.roles if claims
 
 is_admin_path if startswith(input.path, "/ehrbase/rest/admin")
 
+# ── Template-definition READ scoping ─────────────────────────────────────────
+# Ported from jorritspee/openEHRxNuts#14's template-id + operation + user_role
+# allowlist — adapted, not copied verbatim:
+#   - package/data shape matches THIS gateway's input ({method, path, token}),
+#     not #14's `package rules` + Styra-DAS-style
+#     `import data.datasources["acp_access_policy_for_rego.json"]`.
+#   - `operation` isn't a field the gateway sends; it's derived from
+#     input.method below.
+#   - `resource.template.id` isn't recoverable from the path for most READs
+#     either — a `GET /ehr/{id}/composition/{uid}` doesn't name its template.
+#     The one EHRbase endpoint that DOES name a template in its path is the
+#     template-definition GET below, so v1 scopes exactly that: real
+#     template-scoped READ for composition/AQL endpoints needs a PIP (ask
+#     EHRbase what template a composition uid belongs to) — a bigger design
+#     question left for later, not bolted on here.
+template_definition_prefix := "/ehrbase/rest/openehr/v1/definition/template/adl1.4/"
+
+is_template_definition_path if startswith(input.path, template_definition_prefix)
+
+# ngx.var.uri (what the gateway sends as `path`) is nginx's already-decoded
+# $uri, so a template id containing a space (e.g. "EPS Patient Summary")
+# arrives here literal, not percent-encoded.
+template_id := substring(input.path, count(template_definition_prefix), -1) if is_template_definition_path
+
+operation := "READ" if input.method == "GET"
+operation := "CREATE" if input.method == "POST"
+operation := "UPDATE" if input.method in {"PUT", "PATCH"}
+operation := "DELETE" if input.method == "DELETE"
+
+template_read_allowed if {
+	some role in roles
+	some entry in data.ehrbase.datasource.policies
+	entry.user_role == role
+	entry.template_id == template_id
+	entry.operation == operation
+}
+
 # ── v1 baseline: never more permissive than EHRbase's own native check ──────
 # This makes the PEP a strict superset gate in front of EHRbase's binary
 # USER/ADMIN role split — it changes nothing yet, but gives every caller
@@ -43,7 +80,20 @@ allow if {
 
 allow if {
 	not is_admin_path
+	not is_template_definition_path
 	"USER" in roles
+}
+
+# Template-definition GET is carved out of the blanket USER rule above and
+# additionally gated by the datasource allowlist — a restriction layered on
+# top of the native USER check, never a grant it wouldn't already make: a
+# USER-only caller with no dokter/verpleegkundige role (e.g. the default
+# api-client/hapi-svc service tokens) is denied here even though it would
+# pass every other USER-gated endpoint.
+allow if {
+	is_template_definition_path
+	"USER" in roles
+	template_read_allowed
 }
 
 # ── Extension point ──────────────────────────────────────────────────────────

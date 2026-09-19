@@ -37,6 +37,8 @@ docker/docker-compose.yml keycloak service):
 {{- $realm := .Files.Get "config/realm-freshehr.json.tpl"
      | replace "__KC_API_CLIENT_SECRET__" (required "secrets.values.keycloak.API_CLIENT_SECRET is required" $v.keycloak.API_CLIENT_SECRET)
      | replace "__KC_HAPI_SVC_SECRET__" (required "secrets.values.keycloak.HAPI_SVC_SECRET is required" $v.keycloak.HAPI_SVC_SECRET)
+     | replace "__KC_DOKTER_JOOST_SECRET__" (required "secrets.values.keycloak.DOKTER_JOOST_SECRET is required" $v.keycloak.DOKTER_JOOST_SECRET)
+     | replace "__KC_VERPLEEGKUNDIGE_BAS_SECRET__" (required "secrets.values.keycloak.VERPLEEGKUNDIGE_BAS_SECRET is required" $v.keycloak.VERPLEEGKUNDIGE_BAS_SECRET)
      | replace "__OAUTH2_PROXY_CLIENT_SECRET__" (required "secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET is required" $v.keycloak.OAUTH2_PROXY_CLIENT_SECRET)
      | replace "__DOMAIN__" .Values.ingress.host -}}
 apiVersion: v1

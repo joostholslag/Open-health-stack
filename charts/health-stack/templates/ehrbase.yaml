@@ -66,10 +66,19 @@ spec:
           imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.ehrbase.opa.image) }}
           # --ignore=".*" skips the hidden ..data symlink and ..<timestamp>
           # directory that Kubernetes' ConfigMap volume atomic-writer creates
-          # alongside the visible authz.rego symlink — without it, OPA's
+          # alongside the visible ehrbase/ subtree below — without it, OPA's
           # recursive directory loader picks up the same package twice (once
           # via the symlink, once via the real hidden path) and fails with
           # "multiple default rules ... found".
+          #
+          # authz.rego and datasource.json are projected to ehrbase/ (see the
+          # opa-policy volume below), not flat under /policies, so OPA's data
+          # loader merges datasource.json's content at data.ehrbase.datasource
+          # — same path as docker/opa/policies/ehrbase/datasource.json under
+          # compose's `/policies` bind mount. A flat mount would instead land
+          # the JSON at data.datasource (root), which authz.rego's
+          # data.ehrbase.datasource.policies reference would silently never
+          # see (verified empirically with `opa eval`, both layouts).
           args: ["run", "--server", "--addr=:{{ .Values.ehrbase.opa.port }}", "--ignore=.*", "/policies"]
           ports:
             - name: opa-http
@@ -148,8 +157,14 @@ spec:
           configMap:
             name: ehrbase-gateway-config
             items:
+              # Nested under ehrbase/ (not flat) so OPA's data loader merges
+              # datasource.json at the same data.ehrbase.datasource path as
+              # compose's docker/opa/policies/ehrbase/ layout — see the opa
+              # container's args comment above.
               - key: authz.rego
-                path: authz.rego
+                path: ehrbase/authz.rego
+              - key: datasource.json
+                path: ehrbase/datasource.json
 ---
 apiVersion: v1
 kind: Service

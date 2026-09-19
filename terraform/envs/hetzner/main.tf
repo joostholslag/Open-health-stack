@@ -110,6 +110,16 @@ resource "random_password" "kc_hapi_svc" {
   length  = 32
   special = false
 }
+# Demo persona clients for the ehrbase-gateway's template-scoped READ
+# allowlist (charts/health-stack/config/ehrbase-gateway-authz.rego).
+resource "random_password" "kc_dokter_joost" {
+  length  = 32
+  special = false
+}
+resource "random_password" "kc_verpleegkundige_bas" {
+  length  = 32
+  special = false
+}
 resource "random_password" "oauth2_proxy_client" {
   length  = 32
   special = false
@@ -149,12 +159,14 @@ module "apps" {
   hapi_db_password          = random_password.hapi_db.result
   openfhir_db_password      = random_password.openfhir_db.result
 
-  keycloak_admin_password    = random_password.keycloak_admin.result
-  keycloak_db_password       = random_password.keycloak_db.result
-  kc_api_client_secret       = random_password.kc_api_client.result
-  kc_hapi_svc_secret         = random_password.kc_hapi_svc.result
-  oauth2_proxy_client_secret = random_password.oauth2_proxy_client.result
-  oauth2_proxy_cookie_secret = random_password.oauth2_proxy_cookie.result
+  keycloak_admin_password       = random_password.keycloak_admin.result
+  keycloak_db_password          = random_password.keycloak_db.result
+  kc_api_client_secret          = random_password.kc_api_client.result
+  kc_hapi_svc_secret            = random_password.kc_hapi_svc.result
+  kc_dokter_joost_secret        = random_password.kc_dokter_joost.result
+  kc_verpleegkundige_bas_secret = random_password.kc_verpleegkundige_bas.result
+  oauth2_proxy_client_secret    = random_password.oauth2_proxy_client.result
+  oauth2_proxy_cookie_secret    = random_password.oauth2_proxy_cookie.result
 
   http_node_port       = 30080
   https_node_port      = 30443

@@ -79,10 +79,22 @@ reaches EHRbase: the `ehrbase` Pod runs three containers (`ehrbase-gateway`,
 container directly (see [`templates/ehrbase.yaml`](templates/ehrbase.yaml) and
 [`config/ehrbase-gateway-nginx.conf`](config/ehrbase-gateway-nginx.conf)). This
 is transparent to callers — HAPI and openFHIR reach the same Service and see
-no config difference — and today only mirrors EHRbase's own USER/ADMIN check
-(see [`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego)
-for the extension point). The table above still lists `/ehrbase` as "validates
-natively" because that native check is unchanged and still the final word.
+no config difference — and mirrors EHRbase's own USER/ADMIN check, plus one
+additional restriction layered on top: the single-template GET
+(`/ehrbase/rest/openehr/v1/definition/template/adl1.4/{template_id}` — the
+one EHRbase endpoint that names a template in its path) is further gated by
+a `(user_role, template_id, operation)` allowlist in
+[`config/ehrbase-gateway-datasource.json`](config/ehrbase-gateway-datasource.json),
+ported from [jorritspee/openEHRxNuts#14](https://github.com/jorritspee/openEHRxNuts/pull/14).
+Two demo persona roles exercise it end-to-end — `dokter` (granted READ on the
+`EPS Patient Summary` template) and `verpleegkundige` (deliberately not
+granted, so it gets denied there) — via the `dokter-joost`/`verpleegkundige-bas`
+service-account clients in `realm-freshehr.json`. See
+[`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego) for
+the rule and its extension point for other resources/operations, which is
+still just USER/ADMIN today. The table above still lists `/ehrbase` as
+"validates natively" because that native check is unchanged and still the
+final word — the gateway only ever narrows what it allows.
 
 The canonical issuer is the **public** URL `https://<ingress.host>/auth/realms/freshehr`
 (`KC_HOSTNAME`): every token carries it, and EHRbase/oauth2-proxy fetch OIDC
