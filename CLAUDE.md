@@ -45,6 +45,9 @@ Compose and chart MUST declare the same tag for shared components;
 | eps-mappings     | —                                  | `charts/health-stack/values.yaml:103` + `values-hetzner.yaml:52` | team image on `ghcr.io/freshehrteam`; same explicit-tag rule as hapi (pushed) |
 | hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
 | hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:110` + `values-hetzner.yaml:55` | team image `ghcr.io/freshehrteam/hades`; same explicit-tag rule as hapi (pushed) |
+| ehrbase-gateway (PEP) | `docker/docker-compose.yml:144`| `charts/health-stack/values.yaml:254` | `openresty/openresty`; fronts EHRbase on the `ehrbase` DNS name / Service, consults OPA before proxying to `ehrbase-backend` / the sidecar EHRbase container |
+| opa (PDP)        | `docker/docker-compose.yml:164`    | `charts/health-stack/values.yaml:263`| `openpolicyagent/opa`; policy at `docker/opa/policies/ehrbase/authz.rego` (compose) / `charts/health-stack/config/ehrbase-gateway-authz.rego` (chart) — kept in sync BY HAND, same pattern as the Keycloak realm JSON |
+| nuts-node (POC)  | `docker/docker-compose.yml:424`    | — (not yet in the chart)             | `nutsfoundation/nuts-node`; exploratory VC/DID node for a possible future PBAC/ABAC PIP or token-issuer role (see Follow-ups) — standalone, NOT wired into OPA/Keycloak/EHRbase. Images are cosign-signed from `6.2.12`/`5.4.39` onward; verify with `cosign verify nutsfoundation/nuts-node:<tag> --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github.com/nuts-foundation/nuts-node(-private)?/\.github/workflows/build-images\.yaml@'` before trusting a bump. `make versions` does not check this row (compose-only, no chart counterpart). |
 
 ## Hard constraints (learned the hard way — do not "simplify" these away)
 
@@ -67,12 +70,31 @@ Compose and chart MUST declare the same tag for shared components;
 - **Bump `charts/health-stack/Chart.yaml` `version:` on EVERY chart change** —
   terraform's helm provider only re-renders when that version changes;
   without a bump `terraform apply` silently reports "No changes".
+- **EHRbase Admin API (`ADMIN_API_ACTIVE`) is Scaleway-only.** Set in
+  `charts/health-stack/values-scaleway.yaml` ehrbase.env; deliberately absent
+  from `values-hetzner.yaml`, `values.yaml`, and `docker/docker-compose.yml`
+  (default is disabled — the endpoints 404 without it). `/rest/admin/**` lets
+  a caller hard-delete EHRs/compositions/templates, bypassing openEHR's
+  normal versioning/audit-trail guarantees, so keep it off everywhere it
+  isn't explicitly needed. It's gated by both the OPA/PEP gateway and
+  EHRbase's own native `SECURITY_OAUTH2ADMINROLE` check, and currently no
+  client/user in `realm-freshehr.json` holds the `ADMIN` role — granting that
+  role is a separate, deliberate step.
 - **Keycloak `--import-realm` never updates an existing realm.** The realm
   JSON is duplicated in `docker/keycloak/realm-freshehr.json` AND
   `charts/health-stack/config/realm-freshehr.json.tpl` — synced BY HAND; edit
   both. To pick up realm changes: compose = `make destroy` (volume wipe);
   live cluster = the runbook in `charts/health-stack/README.md`
   ("Runbook: updating the realm on a LIVE cluster").
+- **The EHRbase OPA gateway (nginx.conf + authz.rego + nuts_pip.rego) is
+  duplicated across layers** — `docker/ehrbase-gateway/nginx.conf` +
+  `docker/opa/policies/ehrbase/{authz,nuts_pip}.rego` (compose) vs
+  `charts/health-stack/config/ehrbase-gateway-{nginx.conf,authz.rego,nuts-pip.rego}`
+  (chart) — synced BY HAND like the realm JSON; edit both. The gateway must
+  return 401 (no `Authorization` header) vs 403 (header present, OPA denies)
+  — `make smoke`'s auth matrix asserts 401 bare on `ehrbase/rest/status`, and
+  a gateway that collapses both cases to 403
+  breaks that check.
 - **The interceptor JAR is compiled against a specific HAPI FHIR library
   version** (its deps are `provided`-scope, so they bind to whatever the HAPI
   base image ships at runtime). Keep `ARG INTERCEPTOR_VERSION` compatible with
@@ -122,3 +144,13 @@ clean start, `make verify`, UI `stack:verify`, report.
   (`terraform/modules/k8s-apps/main.tf`).
 - Stack e2e stays local-only (CI builds images and lints the chart, but the
   full compose e2e needs the gitignored license/JAR).
+- **Add IPv6 to the Scaleway nodes, in terraform.** `scaleway-cluster`
+  declares no public IPs at all — both `control_plane` and `agent` rely on
+  `enable_dynamic_ip = true` (`terraform/modules/scaleway-cluster/main.tf`),
+  so there is no `scaleway_instance_ip` to hang an IPv6 off. Attaching one by
+  hand does NOT work: the next `terraform apply` reads it into state, sees no
+  matching config, and tries to detach it — which fails
+  (`precondition failed: No reservation for ip …`) and blocks every
+  subsequent apply, including the helm_release update. Do it properly:
+  a `scaleway_instance_ip` with `type = "routed_ipv6"` + `ip_ids` on the
+  server, and `terraform import` any IP that already exists.
