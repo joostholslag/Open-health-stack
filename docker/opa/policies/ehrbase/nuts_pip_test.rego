@@ -9,7 +9,7 @@ import future.keywords.if
 
 import data.ehrbase.nuts_pip
 
-known_sub := "dokter-joost-poc-sub"
+known_sub := "c2da4669-c025-4ca8-936d-ff2f5bc03e67"
 
 mock_dokter_credential := {
 	"status_code": 200,

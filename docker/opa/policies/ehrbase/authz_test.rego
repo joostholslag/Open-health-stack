@@ -31,9 +31,10 @@ admin_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc
 
 eps_template_path := "/ehrbase/rest/openehr/v1/definition/template/adl1.4/EPS Patient Summary"
 
-# {"realm_access":{"roles":["USER"]},"sub":"dokter-joost-poc-sub"} — matches
-# nuts_pip.rego's hardcoded sub_to_did test entry.
-nuts_pip_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiVVNFUiJdfSwic3ViIjoiZG9rdGVyLWpvb3N0LXBvYy1zdWIifQ."
+# {"realm_access":{"roles":["USER"]},"sub":"c2da4669-c025-4ca8-936d-ff2f5bc03e67"}
+# — dokter-joost's real Keycloak sub, matches nuts_pip.rego's sub_to_did entry
+# (which maps it to the did:nuts DID actually issued a dokter credential).
+nuts_pip_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiVVNFUiJdfSwic3ViIjoiYzJkYTQ2NjktYzAyNS00Y2E4LTkzNmQtZmYyZjViYzAzZTY3In0."
 
 mock_dokter_credential := {
 	"status_code": 200,

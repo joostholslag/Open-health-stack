@@ -31,7 +31,7 @@ import future.keywords.in
 # description for the exact API calls used to create it). Follow
 # datasource.json's precedent (a separate, hand-edited JSON file) once this
 # grows past one entry.
-sub_to_did := {"dokter-joost-poc-sub": "REPLACE_WITH_DID_NUTS_VALUE"}
+sub_to_did := {"c2da4669-c025-4ca8-936d-ff2f5bc03e67": "did:nuts:33xRdpmchvQtL17Vvx7LTXSrj92TdEqS3AbDzCatpCda"}
 
 nuts_vc_search_url := "http://nuts-node.health-stack.svc.cluster.local:8081/internal/vcr/v2/issuer/vc/search"
 
