@@ -66,6 +66,12 @@ spec:
         - name: nuts-node
           image: {{ printf "%s:%s" .Values.nutsNode.image.repository .Values.nutsNode.image.tag | quote }}
           imagePullPolicy: {{ .Values.nutsNode.image.pullPolicy }}
+          # Pinned explicitly (matches the image's own default) rather than
+          # relying on the image's USER directive — same as the upstream
+          # nuts-foundation/nuts-node chart's values.yaml.
+          securityContext:
+            runAsUser: 18081
+            runAsGroup: 18081
           ports:
             - name: public
               containerPort: 8080

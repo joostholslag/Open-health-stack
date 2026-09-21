@@ -343,12 +343,16 @@ nutsNode:
   # `helm --wait` never clears (this is what took down the first attempt at
   # this deploy: "context deadline exceeded", atomic rollback).
   startupFailureThreshold: 30
+  # /status (bare "OK", no dependency checks) rather than /health: a liveness
+  # probe should answer "is this process alive", not "are its dependencies
+  # healthy" — /health can fail on a transient downstream blip and cause
+  # needless restarts. Matches the upstream nuts-foundation/nuts-node chart.
   readiness:
-    path: /health
+    path: /status
     periodSeconds: 10
     failureThreshold: 10
   liveness:
-    path: /health
+    path: /status
     periodSeconds: 20
   service:
     type: ClusterIP
