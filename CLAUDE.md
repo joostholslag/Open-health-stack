@@ -86,13 +86,14 @@ Compose and chart MUST declare the same tag for shared components;
   both. To pick up realm changes: compose = `make destroy` (volume wipe);
   live cluster = the runbook in `charts/health-stack/README.md`
   ("Runbook: updating the realm on a LIVE cluster").
-- **The EHRbase OPA gateway (nginx.conf + authz.rego) is duplicated across
-  layers** — `docker/ehrbase-gateway/nginx.conf` + `docker/opa/policies/ehrbase/authz.rego`
-  (compose) vs `charts/health-stack/config/ehrbase-gateway-nginx.conf` +
-  `ehrbase-gateway-authz.rego` (chart) — synced BY HAND like the realm JSON;
-  edit both. The gateway must return 401 (no `Authorization` header) vs 403
-  (header present, OPA denies) — `make smoke`'s auth matrix asserts 401 bare
-  on `ehrbase/rest/status`, and a gateway that collapses both cases to 403
+- **The EHRbase OPA gateway (nginx.conf + authz.rego + nuts_pip.rego) is
+  duplicated across layers** — `docker/ehrbase-gateway/nginx.conf` +
+  `docker/opa/policies/ehrbase/{authz,nuts_pip}.rego` (compose) vs
+  `charts/health-stack/config/ehrbase-gateway-{nginx.conf,authz.rego,nuts-pip.rego}`
+  (chart) — synced BY HAND like the realm JSON; edit both. The gateway must
+  return 401 (no `Authorization` header) vs 403 (header present, OPA denies)
+  — `make smoke`'s auth matrix asserts 401 bare on `ehrbase/rest/status`, and
+  a gateway that collapses both cases to 403
   breaks that check.
 - **The interceptor JAR is compiled against a specific HAPI FHIR library
   version** (its deps are `provided`-scope, so they bind to whatever the HAPI

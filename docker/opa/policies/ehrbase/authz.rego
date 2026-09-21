@@ -15,6 +15,8 @@ package ehrbase.authz
 import future.keywords.if
 import future.keywords.in
 
+import data.ehrbase.nuts_pip
+
 default allow := false
 
 claims := payload if {
@@ -105,6 +107,18 @@ allow if {
 # the shared service-account token — once that lands, the dokter/
 # verpleegkundige allowlist above is correct and sufficient on its own,
 # which is the whole reason it exists.
+
+# ── Experimental: Nuts VC as a live PIP (POC) ───────────────────────────────
+# Alongside the static datasource.json path above, gated to whichever
+# identities have an entry in nuts_pip.sub_to_did — nobody else's
+# authorization changes. See nuts_pip.rego for the query itself and its
+# scope caveats (single hardcoded test identity, in-cluster-only call).
+allow if {
+	is_template_definition_path
+	"USER" in roles
+	template_id == "EPS Patient Summary"
+	nuts_pip.has_nuts_role(claims.sub, "dokter")
+}
 
 # ── Extension point ──────────────────────────────────────────────────────────
 # Attribute-based rule, modeled after EHRbase's own (since-removed) ABAC design

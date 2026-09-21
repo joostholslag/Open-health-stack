@@ -31,6 +31,17 @@ admin_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc
 
 eps_template_path := "/ehrbase/rest/openehr/v1/definition/template/adl1.4/EPS Patient Summary"
 
+# {"realm_access":{"roles":["USER"]},"sub":"dokter-joost-poc-sub"} — matches
+# nuts_pip.rego's hardcoded sub_to_did test entry.
+nuts_pip_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiVVNFUiJdfSwic3ViIjoiZG9rdGVyLWpvb3N0LXBvYy1zdWIifQ."
+
+mock_dokter_credential := {
+	"status_code": 200,
+	"body": {"verifiableCredentials": [
+		{"verifiableCredential": {"credentialSubject": {"purposeOfUse": "dokter"}}},
+	]},
+}
+
 test_dokter_reads_eps_template if {
 	authz.allow with input as {"method": "GET", "path": eps_template_path, "token": dokter_joost_token}
 }
@@ -78,4 +89,18 @@ test_bare_denied_admin_path if {
 
 test_bare_denied_eps_template if {
 	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": ""}
+}
+
+# ── Nuts PIP path (POC) ──────────────────────────────────────────────────────
+test_nuts_pip_role_reads_eps_template if {
+	authz.allow with input as {"method": "GET", "path": eps_template_path, "token": nuts_pip_user_token}
+		with http.send as mock_dokter_credential
+}
+
+test_nuts_pip_denied_without_mocked_credential if {
+	# Same token/path as above, but nuts-node has nothing to say (e.g. the
+	# search returns empty) — must not fall through to an allow.
+	empty_response := {"status_code": 200, "body": {"verifiableCredentials": []}}
+	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": nuts_pip_user_token}
+		with http.send as empty_response
 }

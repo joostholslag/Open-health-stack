@@ -87,5 +87,7 @@ data:
 {{ .Files.Get "config/ehrbase-gateway-nginx.conf" | indent 4 }}
   authz.rego: |-
 {{ .Files.Get "config/ehrbase-gateway-authz.rego" | indent 4 }}
+  nuts_pip.rego: |-
+{{ .Files.Get "config/ehrbase-gateway-nuts-pip.rego" | indent 4 }}
   datasource.json: |-
 {{ .Files.Get "config/ehrbase-gateway-datasource.json" | indent 4 }}

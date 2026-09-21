@@ -71,12 +71,13 @@ spec:
           # via the symlink, once via the real hidden path) and fails with
           # "multiple default rules ... found".
           #
-          # authz.rego and datasource.json are projected to ehrbase/ (see the
-          # opa-policy volume below), not flat under /policies, so OPA's data
-          # loader merges datasource.json's content at data.ehrbase.datasource
-          # — same path as docker/opa/policies/ehrbase/datasource.json under
-          # compose's `/policies` bind mount. A flat mount would instead land
-          # the JSON at data.datasource (root), which authz.rego's
+          # authz.rego, nuts_pip.rego, and datasource.json are all projected to
+          # ehrbase/ (see the opa-policy volume below), not flat under
+          # /policies, so OPA's data loader merges datasource.json's content
+          # at data.ehrbase.datasource — same path as
+          # docker/opa/policies/ehrbase/datasource.json under compose's
+          # `/policies` bind mount. A flat mount would instead land the JSON
+          # at data.datasource (root), which authz.rego's
           # data.ehrbase.datasource.policies reference would silently never
           # see (verified empirically with `opa eval`, both layouts).
           args: ["run", "--server", "--addr=:{{ .Values.ehrbase.opa.port }}", "--ignore=.*", "/policies"]
@@ -163,6 +164,8 @@ spec:
               # container's args comment above.
               - key: authz.rego
                 path: ehrbase/authz.rego
+              - key: nuts_pip.rego
+                path: ehrbase/nuts_pip.rego
               - key: datasource.json
                 path: ehrbase/datasource.json
 ---
