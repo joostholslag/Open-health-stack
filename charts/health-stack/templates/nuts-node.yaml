@@ -77,6 +77,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /nuts/data
+          startupProbe:
+            httpGet:
+              path: {{ .Values.nutsNode.readiness.path }}
+              port: 8081
+            periodSeconds: 10
+            failureThreshold: {{ .Values.nutsNode.startupFailureThreshold }}
           readinessProbe:
             httpGet:
               path: {{ .Values.nutsNode.readiness.path }}

@@ -335,6 +335,14 @@ nutsNode:
   # PVC for did:nuts keys/state (crypto + gRPC network storage).
   storage: 1Gi
   resources: {}
+  # First boot generates crypto material and initializes local storage before
+  # the HTTP listener opens; the startupProbe budgets 10s × this threshold
+  # (300s) so liveness/readiness (below) can stay tight once serving. Without
+  # this, the default liveness failureThreshold (3, 20s apart = 60s) restarts
+  # the container before first boot finishes — an infinite crash loop that
+  # `helm --wait` never clears (this is what took down the first attempt at
+  # this deploy: "context deadline exceeded", atomic rollback).
+  startupFailureThreshold: 30
   readiness:
     path: /health
     periodSeconds: 10
