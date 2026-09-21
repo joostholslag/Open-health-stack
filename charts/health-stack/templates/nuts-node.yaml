@@ -54,6 +54,14 @@ spec:
         {{- include "health-stack.componentLabels" (dict "ctx" . "name" "nuts-node") | nindent 8 }}
     spec:
       {{- include "health-stack.scheduling" . | nindent 6 }}
+      # The image's default user (18081, group 18081 only — see the nuts-node
+      # docker docs) has no write access to a freshly-provisioned PVC, which
+      # is root-owned by default: "unable to configure Storage: open
+      # data/rw-access-test-file: permission denied" — fatal, crash-loops
+      # immediately. fsGroup makes Kubernetes chgrp the volume to 18081 (with
+      # setgid) on mount instead of chowning the image's binaries to root.
+      securityContext:
+        fsGroup: 18081
       containers:
         - name: nuts-node
           image: {{ printf "%s:%s" .Values.nutsNode.image.repository .Values.nutsNode.image.tag | quote }}
