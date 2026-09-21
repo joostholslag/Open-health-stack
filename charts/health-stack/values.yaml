@@ -313,6 +313,55 @@ openfhir:
 
 # ── hades (FHIR terminology server) ──────────────────────────────────────────
 # SNOMED CT / LOINC / FHIR-package terminology over $lookup/$expand/
+# ── Nuts node (VC/DID exploration POC) ───────────────────────────────────────
+# Standalone: NOT wired into OPA/Keycloak/EHRbase — see CLAUDE.md follow-ups.
+# Only the public API (8080) is reachable via ingress (path /nuts, matching
+# Nuts's own recommended-deployment model: /iam, /oauth2, /.well-known and
+# /statuslist are meant to be internet-reachable). The internal/admin API
+# (8081 — unauthenticated DID/VC management, deliberately never in the
+# ingress) and the gRPC network port (5555 — unauthenticated inbound peers in
+# non-strict mode) stay ClusterIP-only; reach them with kubectl port-forward.
+nutsNode:
+  enabled: true
+  replicas: 1
+  image:
+    repository: nutsfoundation/nuts-node
+    # Cosign-signed from this tag onward — see the verification command in
+    # CLAUDE.md's image-pins table before bumping.
+    tag: "6.2.12"
+    pullPolicy: IfNotPresent
+  env:
+    NUTS_STRICTMODE: "false"   # local/dev POC only — never set false in prod
+  # PVC for did:nuts keys/state (crypto + gRPC network storage).
+  storage: 1Gi
+  resources: {}
+  # First boot generates crypto material and initializes local storage before
+  # the HTTP listener opens; the startupProbe budgets 10s × this threshold
+  # (300s) so liveness/readiness (below) can stay tight once serving. Without
+  # this, the default liveness failureThreshold (3, 20s apart = 60s) restarts
+  # the container before first boot finishes — an infinite crash loop that
+  # `helm --wait` never clears (this is what took down the first attempt at
+  # this deploy: "context deadline exceeded", atomic rollback).
+  startupFailureThreshold: 30
+  # /status (bare "OK", no dependency checks) rather than /health: a liveness
+  # probe should answer "is this process alive", not "are its dependencies
+  # healthy" — /health can fail on a transient downstream blip and cause
+  # needless restarts. Matches the upstream nuts-foundation/nuts-node chart.
+  readiness:
+    path: /status
+    periodSeconds: 10
+    failureThreshold: 10
+  liveness:
+    path: /status
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    publicPort: 8080
+    internalPort: 8081
+    grpcPort: 5555
+
+# ── hades (FHIR terminology server) ──────────────────────────────────────────
+# SNOMED CT / LOINC / FHIR-package terminology over $lookup/$expand/
 # $validate-code/$subsumes/$translate. No Postgres wiring: terminology lives in
 # *.db files on its own PVC, bootstrapped from the public FHIR package registry
 # on first boot (see docker/hades/entrypoint.sh). SNOMED/LOINC are optional
