@@ -4,9 +4,20 @@
 # "how does Nuts factor into auth" design question this is a slice of.
 #
 # Scope of this first step: gated to ONE hardcoded test identity below (see
-# sub_to_did), so it changes authorization for nobody else. A real version
-# would derive sub_to_did from Keycloak (a custom user attribute, or
-# eventually a token Nuts itself issued) instead of hardcoding it here.
+# username_to_did), so it changes authorization for nobody else. A real
+# version would derive username_to_did from Keycloak (a custom user
+# attribute, or eventually a token Nuts itself issued) instead of hardcoding
+# it here.
+#
+# Keyed on `preferred_username`, not `sub`: a live token from this realm's
+# verify-cli client (confirmed against an actual dokter-joost login) carries
+# no `sub` claim at all, so a sub-keyed map can never match a real token —
+# found by checking nuts-node's own request log for the expected
+# /internal/vcr/v2/issuer/vc/search call and seeing nothing arrive. Using
+# `preferred_username` instead trades the usual "usernames can be renamed"
+# downside for actually working — acceptable here since dokter-joost and
+# verpleegkundige-bas are fixed named demo personas, not accounts anyone
+# renames.
 #
 # nuts_vc_search_url points at nuts-node's INTERNAL API over the in-cluster
 # Service DNS — reachable because OPA already runs in-cluster (a sidecar in
@@ -26,19 +37,19 @@ package ehrbase.nuts_pip
 import future.keywords.if
 import future.keywords.in
 
-# Keycloak JWT `sub` -> the did:nuts DID that was manually issued a matching
-# NutsAuthorizationCredential on the nuts-node POC (see the branch's PR
-# description for the exact API calls used to create it). Follow
-# datasource.json's precedent (a separate, hand-edited JSON file) once this
-# grows past one entry.
-sub_to_did := {"c2da4669-c025-4ca8-936d-ff2f5bc03e67": "did:nuts:33xRdpmchvQtL17Vvx7LTXSrj92TdEqS3AbDzCatpCda"}
+# Keycloak JWT `preferred_username` -> the did:nuts DID that was manually
+# issued a matching NutsAuthorizationCredential on the nuts-node POC (see
+# the branch's PR description for the exact API calls used to create it).
+# Follow datasource.json's precedent (a separate, hand-edited JSON file)
+# once this grows past one entry.
+username_to_did := {"dokter-joost": "did:nuts:33xRdpmchvQtL17Vvx7LTXSrj92TdEqS3AbDzCatpCda"}
 
 nuts_vc_search_url := "http://nuts-node.health-stack.svc.cluster.local:8081/internal/vcr/v2/issuer/vc/search"
 
 # True if nuts-node holds a NutsAuthorizationCredential, self-issued by the
 # caller's DID, whose credentialSubject.purposeOfUse matches.
-has_nuts_role(sub, purpose_of_use) if {
-	did := sub_to_did[sub]
+has_nuts_role(username, purpose_of_use) if {
+	did := username_to_did[username]
 	resp := http.send({
 		"method": "GET",
 		"url": nuts_vc_search_url,

@@ -117,7 +117,7 @@ allow if {
 	is_template_definition_path
 	"USER" in roles
 	template_id == "EPS Patient Summary"
-	nuts_pip.has_nuts_role(claims.sub, "dokter")
+	nuts_pip.has_nuts_role(claims.preferred_username, "dokter")
 }
 
 # ── Extension point ──────────────────────────────────────────────────────────

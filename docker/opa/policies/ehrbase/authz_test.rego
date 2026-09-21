@@ -31,10 +31,13 @@ admin_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc
 
 eps_template_path := "/ehrbase/rest/openehr/v1/definition/template/adl1.4/EPS Patient Summary"
 
-# {"realm_access":{"roles":["USER"]},"sub":"c2da4669-c025-4ca8-936d-ff2f5bc03e67"}
-# — dokter-joost's real Keycloak sub, matches nuts_pip.rego's sub_to_did entry
-# (which maps it to the did:nuts DID actually issued a dokter credential).
-nuts_pip_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiVVNFUiJdfSwic3ViIjoiYzJkYTQ2NjktYzAyNS00Y2E4LTkzNmQtZmYyZjViYzAzZTY3In0."
+# {"realm_access":{"roles":["USER"]},"preferred_username":"dokter-joost"} —
+# deliberately WITHOUT the "dokter" role, so this token can only pass through
+# the new Nuts PIP rule below, never the static datasource.json path — and
+# with preferred_username, not sub: a real access token from this realm's
+# verify-cli client carries no `sub` claim at all (confirmed against an
+# actual login), which is why nuts_pip.rego keys on username instead.
+nuts_pip_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsiVVNFUiJdfSwicHJlZmVycmVkX3VzZXJuYW1lIjoiZG9rdGVyLWpvb3N0In0."
 
 mock_dokter_credential := {
 	"status_code": 200,
