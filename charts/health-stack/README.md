@@ -73,6 +73,51 @@ every service client). An edge gate would double-validate the same token for
 no gain. The engine's `/health`, `/status` and swagger stay `permitAll`, so
 kubelet probes are unaffected.
 
+`/ehrbase` additionally passes through an OPA-backed PEP before it ever
+reaches EHRbase: the `ehrbase` Pod runs three containers (`ehrbase-gateway`,
+`opa`, `ehrbase`), and the `ehrbase` Service targets the gateway, not the CDR
+container directly (see [`templates/ehrbase.yaml`](templates/ehrbase.yaml) and
+[`config/ehrbase-gateway-nginx.conf`](config/ehrbase-gateway-nginx.conf)). This
+is transparent to callers — HAPI and openFHIR reach the same Service and see
+no config difference — and mirrors EHRbase's own USER/ADMIN check, plus one
+additional restriction layered on top: the single-template GET
+(`/ehrbase/rest/openehr/v1/definition/template/adl1.4/{template_id}` — the
+one EHRbase endpoint that names a template in its path) is further gated by
+a `(user_role, template_id, operation)` allowlist in
+[`config/ehrbase-gateway-datasource.json`](config/ehrbase-gateway-datasource.json),
+ported from [jorritspee/openEHRxNuts#14](https://github.com/jorritspee/openEHRxNuts/pull/14).
+Two demo persona roles exercise it end-to-end — `dokter` (granted READ on the
+`EPS Patient Summary` template) and `verpleegkundige` (deliberately not
+granted, so it gets denied there) — held by the real interactive Keycloak
+users `dokter-joost`/`verpleegkundige-bas` in `realm-freshehr.json` (nictiz-ui
+logs these in through its own client; the realm's `verify-cli` public client
+exists only so `scripts/verify.sh` can fetch a token for them without a
+browser).
+
+**Known gap, live on Scaleway as of 2026-09-21 (not the gateway's to fix):**
+nictiz-ui's composition form currently fetches the web template with its own
+backend service credential (`nictiz-ui-svc`, client_credentials), not the
+logged-in clinician's token, so it hits a 403 here — the `dokter`/
+`verpleegkundige` allowlist has no individual user's roles to scope by on
+that call path, only `nictiz-ui-svc`'s own (`USER` + `default-roles-freshehr`,
+confirmed via Keycloak — nothing else). An `admin`-role bypass rule lived
+here briefly (2026-09-19 to 2026-09-21) on the mistaken assumption that
+`nictiz-ui-svc` already held `admin` for openFHIR's `$purge`; it didn't, the
+bypass never fired (confirmed by a live 403 in the gateway log after it
+shipped), and it's been reverted — see git history on `authz.rego`. The
+actual fix is on nictiz-ui's side: forward the clinician's own token for
+this one call, the same pattern its `/api/admin/access-check` and
+`/api/admin/execute` routes already use, instead of the shared
+`nictiz-ui-svc` token. Once that lands, the `dokter`/`verpleegkundige`
+allowlist below is correct and sufficient on its own — that was always the
+design; this gap is nictiz-ui not yet calling in with the right identity.
+
+See [`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego)
+for the rules and the extension point for other resources/operations, which
+is still just USER/ADMIN today. The table above still lists `/ehrbase` as
+"validates natively" because that native check is unchanged and still the
+final word — the gateway only ever narrows what it allows.
+
 The canonical issuer is the **public** URL `https://<ingress.host>/auth/realms/freshehr`
 (`KC_HOSTNAME`): every token carries it, and EHRbase/oauth2-proxy fetch OIDC
 discovery through the LB (they crash-loop harmlessly until Keycloak + DNS are

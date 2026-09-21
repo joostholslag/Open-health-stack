@@ -15,6 +15,8 @@ spec:
     metadata:
       labels:
         {{- include "health-stack.componentLabels" (dict "ctx" . "name" "ehrbase") | nindent 8 }}
+      annotations:
+        {{- include "health-stack.configChecksum" (dict "ctx" .) | nindent 8 }}
     spec:
       {{- include "health-stack.scheduling" . | nindent 6 }}
       # EHRbase needs its Postgres schema ready before it boots. The wait uses
@@ -22,11 +24,91 @@ spec:
       initContainers:
         {{- include "health-stack.waitForPostgres" (dict "ctx" . "host" "postgres" "user" "DB_USER_ADMIN" "userFromEnv" true "secretName" .Values.secretNames.ehrbase) | nindent 8 }}
       containers:
+        # ── PEP gateway (sidecar, OPA-backed) ────────────────────────────────
+        # Fronts the `ehrbase` container below: the Service targets THIS
+        # container's port, not 8080 directly. All three containers share one
+        # network namespace/Pod IP, so this talks to `opa` and `ehrbase` over
+        # localhost — no extra Service, no DNS hop. See
+        # config/ehrbase-gateway-nginx.conf for the request flow and why
+        # OpenResty (not stock nginx) is needed.
+        - name: ehrbase-gateway
+          image: {{ include "health-stack.image" (dict "image" .Values.ehrbase.gateway.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.ehrbase.gateway.image) }}
+          ports:
+            - name: gateway-http
+              containerPort: {{ .Values.ehrbase.gateway.port }}
+          volumeMounts:
+            - name: gateway-config
+              mountPath: /usr/local/openresty/nginx/conf/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.ehrbase.readiness.path }}
+              port: {{ .Values.ehrbase.gateway.port }}
+            initialDelaySeconds: {{ .Values.ehrbase.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.ehrbase.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.ehrbase.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.ehrbase.liveness.path }}
+              port: {{ .Values.ehrbase.gateway.port }}
+            initialDelaySeconds: {{ .Values.ehrbase.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.ehrbase.liveness.periodSeconds }}
+          {{- with .Values.ehrbase.gateway.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+        # ── OPA (policy decision point for the gateway above) ────────────────
+        - name: opa
+          image: {{ include "health-stack.image" (dict "image" .Values.ehrbase.opa.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.ehrbase.opa.image) }}
+          # --ignore=".*" skips the hidden ..data symlink and ..<timestamp>
+          # directory that Kubernetes' ConfigMap volume atomic-writer creates
+          # alongside the visible ehrbase/ subtree below — without it, OPA's
+          # recursive directory loader picks up the same package twice (once
+          # via the symlink, once via the real hidden path) and fails with
+          # "multiple default rules ... found".
+          #
+          # authz.rego and datasource.json are projected to ehrbase/ (see the
+          # opa-policy volume below), not flat under /policies, so OPA's data
+          # loader merges datasource.json's content at data.ehrbase.datasource
+          # — same path as docker/opa/policies/ehrbase/datasource.json under
+          # compose's `/policies` bind mount. A flat mount would instead land
+          # the JSON at data.datasource (root), which authz.rego's
+          # data.ehrbase.datasource.policies reference would silently never
+          # see (verified empirically with `opa eval`, both layouts).
+          args: ["run", "--server", "--addr=:{{ .Values.ehrbase.opa.port }}", "--ignore=.*", "/policies"]
+          ports:
+            - name: opa-http
+              containerPort: {{ .Values.ehrbase.opa.port }}
+          volumeMounts:
+            - name: opa-policy
+              mountPath: /policies
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.ehrbase.opa.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.ehrbase.opa.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          {{- with .Values.ehrbase.opa.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
         - name: ehrbase
           image: {{ include "health-stack.image" (dict "image" .Values.ehrbase.image) | quote }}
           imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.ehrbase.image) }}
           ports:
-            - name: http
+            - name: ehrbase-http
               containerPort: 8080
           env:
             {{- range $k, $v := .Values.ehrbase.env }}
@@ -64,6 +146,25 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: gateway-config
+          configMap:
+            name: ehrbase-gateway-config
+            items:
+              - key: nginx.conf
+                path: nginx.conf
+        - name: opa-policy
+          configMap:
+            name: ehrbase-gateway-config
+            items:
+              # Nested under ehrbase/ (not flat) so OPA's data loader merges
+              # datasource.json at the same data.ehrbase.datasource path as
+              # compose's docker/opa/policies/ehrbase/ layout — see the opa
+              # container's args comment above.
+              - key: authz.rego
+                path: ehrbase/authz.rego
+              - key: datasource.json
+                path: ehrbase/datasource.json
 ---
 apiVersion: v1
 kind: Service
@@ -76,7 +177,10 @@ spec:
   selector:
     {{- include "health-stack.selectorLabels" (dict "name" "ehrbase") | nindent 4 }}
   ports:
+    # Targets the ehrbase-gateway container's port, NOT the real ehrbase
+    # container's 8080 — that's only reachable from inside the Pod now (see
+    # the gateway container above).
     - name: http
       port: {{ .Values.ehrbase.service.port }}
-      targetPort: 8080
+      targetPort: {{ .Values.ehrbase.gateway.port }}
 {{- end }}

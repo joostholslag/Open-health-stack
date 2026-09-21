@@ -18,7 +18,9 @@ with its own checksum/realm annotation on the keycloak pod.)
 
 Credential-free config stays in plain ConfigMaps — openfhir-application.yaml
 is still rendered from a .tpl (the issuer needs __DOMAIN__), but contains no
-secret.
+secret. ehrbase-gateway-config (nginx.conf + authz.rego + datasource.json,
+for the OPA-backed PEP sidecar in the ehrbase Pod — see
+templates/ehrbase.yaml) needs no substitution at all, so it ships verbatim.
 */}}
 {{- $v := .Values.secrets.values -}}
 apiVersion: v1
@@ -73,3 +75,17 @@ data:
 {{ .Files.Get "config/openfhir-application.yaml.tpl"
      | replace "__DOMAIN__" .Values.ingress.host
      | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ehrbase-gateway-config
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "ehrbase") | nindent 4 }}
+data:
+  nginx.conf: |-
+{{ .Files.Get "config/ehrbase-gateway-nginx.conf" | indent 4 }}
+  authz.rego: |-
+{{ .Files.Get "config/ehrbase-gateway-authz.rego" | indent 4 }}
+  datasource.json: |-
+{{ .Files.Get "config/ehrbase-gateway-datasource.json" | indent 4 }}
