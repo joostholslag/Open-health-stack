@@ -92,23 +92,19 @@ allow if {
 	template_read_allowed
 }
 
-# nictiz-ui's composition form fetches the web template with its OWN backend
-# service credential (nictiz-ui-svc, "node" in the gateway access log), not
-# the logged-in clinician's token — confirmed via a live 403 on Scaleway,
-# 2026-09-19. That means the dokter/verpleegkundige datasource allowlist
-# above can never apply to this call path: there is no individual user's
-# roles in play to scope by, only the shared service account's. Bypass it for
-# that account the same way it's already trusted for openFHIR's $purge — the
-# "admin" role. Deliberate trade-off, not a bug: any admin-role holder now
-# gets blanket template-definition READ regardless of template, and per-user
-# distinction on THIS endpoint only ever applies to a caller presenting its
-# own token directly (not routed through nictiz-ui's BFF). The other option
-# — nictiz-ui forwarding the clinician's own token for this fetch instead —
-# would restore real per-user scoping; revisit if that becomes feasible.
-allow if {
-	is_template_definition_path
-	"admin" in roles
-}
+# REVERTED (was here 2026-09-19 to 2026-09-21, see git history): an "admin"
+# in roles bypass for this path, on the premise that nictiz-ui's composition
+# form calls it with the nictiz-ui-svc service credential which supposedly
+# already held "admin" for openFHIR's $purge. That premise was wrong — a
+# live check of nictiz-ui-svc's actual service-account roles in Keycloak
+# showed only USER + default-roles-freshehr, and the bypass predictably
+# never fired (confirmed by a live 403 in the gateway log, same call, after
+# the bypass was deployed). The real fix is on nictiz-ui's side: forward the
+# logged-in clinician's own token for this call (same pattern already used
+# by its /api/admin/access-check and /api/admin/execute routes) instead of
+# the shared service-account token — once that lands, the dokter/
+# verpleegkundige allowlist above is correct and sufficient on its own,
+# which is the whole reason it exists.
 
 # ── Extension point ──────────────────────────────────────────────────────────
 # Attribute-based rule, modeled after EHRbase's own (since-removed) ABAC design

@@ -20,7 +20,7 @@ dokter_joost_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV
 verpleegkundige_bas_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOiB7InJvbGVzIjogWyJVU0VSIiwgInZlcnBsZWVna3VuZGlnZSJdfX0."
 
 # {"realm_access":{"roles":["USER","admin"]}} — the default api-client/hapi-svc
-# shape, and also nictiz-ui-svc's (see the "admin" bypass rule in authz.rego).
+# shape.
 plain_user_token := "Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJyZWFsbV9hY2Nlc3MiOiB7InJvbGVzIjogWyJVU0VSIiwgImFkbWluIl19fQ."
 
 # {"realm_access":{"roles":["USER"]}} — USER but no admin/dokter/verpleegkundige.
@@ -46,12 +46,12 @@ test_user_only_denied_eps_template if {
 	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": user_only_token}
 }
 
-test_admin_role_allowed_eps_template if {
-	# nictiz-ui's composition form fetches the web template with its own
-	# backend service credential (USER+admin, same shape as api-client/
-	# hapi-svc), never the clinician's own token — see the "admin" bypass
-	# rule's comment in authz.rego for why this is a deliberate trade-off.
-	authz.allow with input as {"method": "GET", "path": eps_template_path, "token": plain_user_token}
+test_admin_role_denied_eps_template if {
+	# Locks in the revert (see authz.rego's "REVERTED" comment): "admin" alone
+	# (no dokter/verpleegkundige) must NOT grant template-definition READ,
+	# same as plain USER. A caller needs an actual datasource-allowlisted
+	# role, not a blanket role bypass.
+	not authz.allow with input as {"method": "GET", "path": eps_template_path, "token": plain_user_token}
 }
 
 test_plain_user_allowed_template_list if {

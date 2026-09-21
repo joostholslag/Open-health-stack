@@ -94,20 +94,23 @@ logs these in through its own client; the realm's `verify-cli` public client
 exists only so `scripts/verify.sh` can fetch a token for them without a
 browser).
 
-**Caveat confirmed live on Scaleway (2026-09-19):** nictiz-ui's composition
-form fetches the web template with its own backend service credential
-(`nictiz-ui-svc`, same `USER`+`admin` shape as `api-client`/`hapi-svc`), not
-the logged-in clinician's token — so the `dokter`/`verpleegkundige` allowlist
-can never apply to that call path; there's no individual user's roles in
-play there, only the shared service account's. `authz.rego` carries a third
-`allow` rule for the template-definition path that lets any `admin`-role
-holder through regardless of template, mirroring how `admin` already grants
-openFHIR's `$purge`. This is a deliberate trade-off, not a bug: any current
-or future holder of `admin` gets blanket template-definition READ, and
-per-user distinction on this one endpoint only actually applies to a caller
-presenting its own token directly (not routed through nictiz-ui's BFF).
-Restoring real per-clinician scoping there would mean nictiz-ui forwarding
-the individual user's own Bearer token for this fetch instead — not done.
+**Known gap, live on Scaleway as of 2026-09-21 (not the gateway's to fix):**
+nictiz-ui's composition form currently fetches the web template with its own
+backend service credential (`nictiz-ui-svc`, client_credentials), not the
+logged-in clinician's token, so it hits a 403 here — the `dokter`/
+`verpleegkundige` allowlist has no individual user's roles to scope by on
+that call path, only `nictiz-ui-svc`'s own (`USER` + `default-roles-freshehr`,
+confirmed via Keycloak — nothing else). An `admin`-role bypass rule lived
+here briefly (2026-09-19 to 2026-09-21) on the mistaken assumption that
+`nictiz-ui-svc` already held `admin` for openFHIR's `$purge`; it didn't, the
+bypass never fired (confirmed by a live 403 in the gateway log after it
+shipped), and it's been reverted — see git history on `authz.rego`. The
+actual fix is on nictiz-ui's side: forward the clinician's own token for
+this one call, the same pattern its `/api/admin/access-check` and
+`/api/admin/execute` routes already use, instead of the shared
+`nictiz-ui-svc` token. Once that lands, the `dokter`/`verpleegkundige`
+allowlist below is correct and sufficient on its own — that was always the
+design; this gap is nictiz-ui not yet calling in with the right identity.
 
 See [`config/ehrbase-gateway-authz.rego`](config/ehrbase-gateway-authz.rego)
 for the rules and the extension point for other resources/operations, which
