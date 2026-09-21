@@ -1,0 +1,120 @@
+{{- /*
+nuts-node — exploratory Nuts VC/DID node (POC, see CLAUDE.md follow-ups).
+
+Deliberately standalone: no OAuth2/OPA/EHRbase wiring, no depends_on-style
+edges to other components. Only the public API (8080) is fronted by the
+Ingress (templates/ingress.yaml, path /nuts); the internal/admin API (8081)
+and the gRPC network port (5555) are exposed on the Service for in-cluster
+use only (kubectl port-forward) and MUST NOT be added to any Ingress — 8081
+has no built-in authentication (DID/VC creation and node control live there),
+and 5555 accepts unauthenticated inbound peers while NUTS_STRICTMODE=false.
+
+NUTS_URL is derived from the shared ingress.host + the /nuts path prefix so
+this POC needs no separate DNS entry. Nuts's own docs treat the domain as
+identity-bearing (baked into every DID/OAuth client_id the node issues) and
+recommend a dedicated, stable domain for real use — revisit this before the
+node issues anything meant to be trusted long-term.
+*/ -}}
+{{- if .Values.nutsNode.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nuts-node-data
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "nuts-node") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.storage.className }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nutsNode.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nuts-node
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "nuts-node") | nindent 4 }}
+spec:
+  replicas: {{ .Values.nutsNode.replicas }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  strategy:
+    # The data PVC is ReadWriteOnce; the old pod must release it before a
+    # replacement can mount it (replicas must stay 1 for the same reason).
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "nuts-node") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "nuts-node") | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      containers:
+        - name: nuts-node
+          image: {{ printf "%s:%s" .Values.nutsNode.image.repository .Values.nutsNode.image.tag | quote }}
+          imagePullPolicy: {{ .Values.nutsNode.image.pullPolicy }}
+          ports:
+            - name: public
+              containerPort: 8080
+            - name: internal
+              containerPort: 8081
+            - name: grpc
+              containerPort: 5555
+          env:
+            - name: NUTS_STRICTMODE
+              value: {{ .Values.nutsNode.env.NUTS_STRICTMODE | quote }}
+            - name: NUTS_URL
+              value: {{ printf "https://%s/nuts" .Values.ingress.host | quote }}
+            # Splits the admin/DID/VC API off the public port — the default
+            # (127.0.0.1:8081) would be unreachable even for the Service.
+            - name: NUTS_HTTP_INTERNAL_ADDRESS
+              value: ":8081"
+          volumeMounts:
+            - name: data
+              mountPath: /nuts/data
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.nutsNode.readiness.path }}
+              port: 8081
+            periodSeconds: {{ .Values.nutsNode.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.nutsNode.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.nutsNode.liveness.path }}
+              port: 8081
+            periodSeconds: {{ .Values.nutsNode.liveness.periodSeconds }}
+          {{- with .Values.nutsNode.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: nuts-node-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nuts-node
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "nuts-node") | nindent 4 }}
+spec:
+  type: {{ .Values.nutsNode.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "nuts-node") | nindent 4 }}
+  ports:
+    - name: public
+      port: {{ .Values.nutsNode.service.publicPort }}
+      targetPort: 8080
+    - name: internal
+      port: {{ .Values.nutsNode.service.internalPort }}
+      targetPort: 8081
+    - name: grpc
+      port: {{ .Values.nutsNode.service.grpcPort }}
+      targetPort: 5555
+{{- end }}
