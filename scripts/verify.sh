@@ -56,6 +56,53 @@ for opt in "$BOOTSTRAP_DIR"/*.opt; do
   fi
 done
 
+# ── 3b. OPA-backed PEP gate on /ehrbase ───────────────────────────────────────
+# smoke's auth matrix only proves "has a Bearer token" vs "doesn't" on a
+# non-admin route — it would stay green even if the gateway allowed EVERY
+# Bearer token straight through to EHRbase's /rest/admin/** without OPA ever
+# denying anything. Prove the gate itself: the default token (USER + openFHIR
+# admin(lowercase), see docker/keycloak/realm-freshehr.json) does NOT carry
+# EHRbase's own ADMIN realm role, so it must be denied on an admin path — and
+# a bare request on that same path must get 401 (no credentials), not 403
+# (credentials present but insufficient), matching EHRbase's own native
+# SECURITY_OAUTH2ADMINROLE check (README "/rest/admin/** does require the
+# ADMIN realm role").
+admin_bearer=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+  "$EDGE/ehrbase/rest/admin/ehr")
+assert_eq "OPA denies non-ADMIN token on /ehrbase/rest/admin/**" 403 "$admin_bearer"
+
+admin_bare=$(curl -sk -o /dev/null -w '%{http_code}' "$EDGE/ehrbase/rest/admin/ehr")
+assert_eq "OPA: bare request on /ehrbase/rest/admin/** is 401, not 403" 401 "$admin_bare"
+echo
+
+# ── 3c. Template-scoped READ (dokter-joost / verpleegkundige-bas test users) ─
+# Ported from jorritspee/openEHRxNuts#14's template-id + operation + user_role
+# allowlist (see charts/health-stack/config/ehrbase-gateway-authz.rego and its
+# datasource.json). The single-template GET is the only EHRbase endpoint that
+# names a template in its path, so it's the only one this v1 slice scopes:
+# the datasource grants "dokter" READ on EPS Patient Summary and deliberately
+# leaves "verpleegkundige" off it. dokter-joost/verpleegkundige-bas are real
+# Keycloak users (nictiz-ui logs them in via its own client); this fetches a
+# token for each via the public verify-cli client's direct-access-grant login.
+dokter_token=$(fetch_user_token "dokter-joost" "${KC_DOKTER_JOOST_PASSWORD:-dev-dokter-joost-password}")
+verpleegkundige_token=$(fetch_user_token "verpleegkundige-bas" "${KC_VERPLEEGKUNDIGE_BAS_PASSWORD:-dev-verpleegkundige-bas-password}")
+
+if [ -z "$dokter_token" ] || [ -z "$verpleegkundige_token" ]; then
+  fail "no token for dokter-joost/verpleegkundige-bas test users (is the stack up? make up / make destroy for a fresh realm import)"
+else
+  eps_template_url="$EDGE/ehrbase/rest/openehr/v1/definition/template/adl1.4/EPS%20Patient%20Summary"
+
+  dokter_code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $dokter_token" "$eps_template_url")
+  assert_eq "OPA: dokter-joost READ on EPS Patient Summary template -> 200" 200 "$dokter_code"
+
+  verpleegkundige_code=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $verpleegkundige_token" "$eps_template_url")
+  assert_eq "OPA: verpleegkundige-bas READ on EPS Patient Summary template -> 403" 403 "$verpleegkundige_code"
+
+  eps_template_bare=$(curl -sk -o /dev/null -w '%{http_code}' "$eps_template_url")
+  assert_eq "OPA: bare request on EPS Patient Summary template -> 401" 401 "$eps_template_bare"
+fi
+echo
+
 # ── 4. openFHIR mapping state (freshehr tenant) ──────────────────────────────
 # The engine's own STARTUP bootstrap writes under an internal tenant that is
 # invisible to freshehr callers; only `make bootstrap` loads the visible set.

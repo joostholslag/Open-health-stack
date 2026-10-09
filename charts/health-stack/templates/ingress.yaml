@@ -283,3 +283,59 @@ spec:
                   number: {{ .Values.oauth2Proxy.service.port }}
           {{- end }}
 {{- end }}
+---
+{{- if and .Values.ingress.enabled .Values.nutsNode.enabled }}
+{{/*
+Sixth Ingress: /nuts → nuts-node's PUBLIC API only (port 8080).
+
+Needs the same rewrite-target deviation as /openfhir: the Nuts node serves
+/iam, /oauth2, /.well-known, /statuslist at its OWN root (that's fixed by the
+did:web/OAuth2 spec, not configurable), so the /nuts prefix must be stripped
+— NUTS_URL (templates/nuts-node.yaml) is set to https://<host>/nuts to match.
+
+Deliberately NO auth-url: these endpoints are meant to be publicly reachable
+by design (other Nuts nodes, VC issuers/verifiers) — see the Nuts node's own
+"Recommended Deployment" doc. The internal/admin API (8081) and gRPC network
+port (5555) are NOT routed here on purpose; see nuts-node.yaml's header
+comment for why.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack-nuts
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "nuts-node") | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    {{- with .Values.ingress.annotations }}
+    {{- range $k, $v := . }}
+    {{- if ne $k "nginx.ingress.kubernetes.io/use-regex" }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /nuts(?:/(.*))?$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: nuts-node
+                port:
+                  number: {{ .Values.nutsNode.service.publicPort }}
+{{- end }}

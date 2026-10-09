@@ -70,6 +70,18 @@ variable "kc_hapi_svc_secret" {
   type      = string
   sensitive = true
 }
+# Login password for the dokter-joost / verpleegkundige-bas test users
+# (interactive Keycloak users — see realm-freshehr.json.tpl) exercising the
+# ehrbase-gateway's template-scoped READ allowlist. nictiz-ui logs them in via
+# its own client; scripts/verify.sh fetches a token via the verify-cli client.
+variable "kc_dokter_joost_password" {
+  type      = string
+  sensitive = true
+}
+variable "kc_verpleegkundige_bas_password" {
+  type      = string
+  sensitive = true
+}
 variable "oauth2_proxy_client_secret" {
   type      = string
   sensitive = true
@@ -234,6 +246,14 @@ resource "helm_release" "health_stack" {
   set_sensitive {
     name  = "secrets.values.keycloak.HAPI_SVC_SECRET"
     value = var.kc_hapi_svc_secret
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.DOKTER_JOOST_PASSWORD"
+    value = var.kc_dokter_joost_password
+  }
+  set_sensitive {
+    name  = "secrets.values.keycloak.VERPLEEGKUNDIGE_BAS_PASSWORD"
+    value = var.kc_verpleegkundige_bas_password
   }
   set_sensitive {
     name  = "secrets.values.keycloak.OAUTH2_PROXY_CLIENT_SECRET"

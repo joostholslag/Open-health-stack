@@ -1,0 +1,12 @@
+{
+  "datasource": {
+    "_comment": "Editable by non-engineers, like PR #14's original: one row per (user_role, template_id, operation) grant for the template-definition READ scoping in authz.rego. Keep in sync BY HAND with charts/health-stack/config/ehrbase-gateway-datasource.json, same as authz.rego.",
+    "policies": [
+      {
+        "template_id": "EPS Patient Summary",
+        "operation": "READ",
+        "user_role": "dokter"
+      }
+    ]
+  }
+}

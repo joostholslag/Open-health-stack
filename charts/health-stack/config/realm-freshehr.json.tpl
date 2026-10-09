@@ -16,6 +16,14 @@
       {
         "name": "admin",
         "description": "openFHIR $purge access (engine checks ROLE_admin, lowercase)"
+      },
+      {
+        "name": "dokter",
+        "description": "Demo persona role (\"Dokter Joost\") for the ehrbase-gateway's template-scoped READ allowlist — see config/ehrbase-gateway-{authz.rego,datasource.json}. Always combined with USER; EHRbase's own native check still applies."
+      },
+      {
+        "name": "verpleegkundige",
+        "description": "Demo persona role (\"Verpleegkundige Bas\") for the ehrbase-gateway's template-scoped READ allowlist — deliberately absent from datasource.json's EPS Patient Summary grant, so this role gets a 403 there while dokter gets 200."
       }
     ]
   },
@@ -152,6 +160,46 @@
       ]
     },
     {
+      "clientId": "verify-cli",
+      "name": "scripts/verify.sh test-user login",
+      "description": "Public direct-access-grant client for scripts/verify.sh to log in as the dokter-joost/verpleegkundige-bas test users. nictiz-ui logs these users in via its own client — this exists only for the CLI test suite (ehrbase-gateway template-scoped READ check).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "oauth2-proxy-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "oauth2-proxy",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
       "clientId": "oauth2-proxy",
       "name": "oauth2-proxy (ingress auth-url edge validator)",
       "description": "Standard-flow client oauth2-proxy authenticates as; also the audience Bearer tokens must carry.",
@@ -195,6 +243,42 @@
       "serviceAccountClientId": "hapi-svc",
       "realmRoles": [
         "USER"
+      ]
+    },
+    {
+      "username": "dokter-joost",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dokter",
+      "lastName": "Joost",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__KC_DOKTER_JOOST_PASSWORD__",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "USER",
+        "dokter"
+      ]
+    },
+    {
+      "username": "verpleegkundige-bas",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Verpleegkundige",
+      "lastName": "Bas",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__KC_VERPLEEGKUNDIGE_BAS_PASSWORD__",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "USER",
+        "verpleegkundige"
       ]
     }
   ],
