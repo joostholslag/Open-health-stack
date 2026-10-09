@@ -116,6 +116,14 @@ Use the `/upgrade-stack` skill (`.claude/skills/upgrade-stack/SKILL.md`) — the
 per-cycle runbook: discover releases, changelog checklist, pin both layers,
 clean start, `make verify`, UI `stack:verify`, report.
 
+## Addressing PR review comments
+
+Use the `/pr-review-comments` skill (`.claude/skills/pr-review-comments/SKILL.md`):
+one sub-session, fork issue and PR per comment; guide joost through manual
+review one step at a time; cherry-pick merged fixes to the deployed branch
+(`DEPLOY_BRANCH`, currently `claude/nuts-pip-poc`); update the issue; report
+back to the main session; archive the session when done.
+
 ## Follow-ups (recorded, out of scope so far)
 
 - Pin the four unpinned terraform add-on Helm charts
