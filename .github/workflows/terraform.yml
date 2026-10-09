@@ -1,0 +1,107 @@
+# Check Terraform changes before they reach deploy-scaleway's real apply.
+#
+# static: fmt + validate for every env. Needs no credentials, runs on every
+#   PR (forks included).
+# plan-scaleway: a real `terraform plan` against the live Scaleway state, so a
+#   reviewer sees exactly what the next deploy-scaleway apply would change.
+#   It reuses deploy-scaleway.yml's secrets and variables (see that file's
+#   ONE-TIME SETUP); nothing new to configure. Same-repo PRs only: GitHub gives
+#   fork PRs no secrets. Hetzner has no plan job because its state is local
+#   (no remote backend), so CI has nothing to plan against.
+#
+# The plan is read-only (no apply), but it runs PR code with the deploy
+# credentials: anyone who can push a branch here can reach those secrets.
+name: terraform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "charts/health-stack/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "charts/health-stack/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff terraform
+
+      - name: terraform validate (each env)
+        run: |
+          set -e
+          for d in terraform/envs/*/; do
+            echo "── validate $d ──"
+            terraform -chdir="$d" init -backend=false -input=false
+            terraform -chdir="$d" validate
+          done
+
+  plan-scaleway:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: static
+    runs-on: ubuntu-latest
+    # Same environment as deploy-scaleway, for its secrets.
+    environment: scaleway
+    env:
+      TF_DIR: terraform/envs/scaleway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Seed kubeconfig + SSH public key (see deploy-scaleway.yml)
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          umask 077
+          printf '%s' "${{ secrets.SCALEWAY_KUBECONFIG }}" > ./kubeconfig
+          printf '%s' "${{ secrets.SCALEWAY_SSH_PUBLIC_KEY }}" > "$RUNNER_TEMP/scaleway.pub"
+
+      - name: terraform init
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+        run: terraform init -input=false
+
+      - name: terraform plan
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          TF_VAR_scw_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          TF_VAR_scw_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          TF_VAR_scw_project_id: ${{ secrets.SCW_PROJECT_ID }}
+          TF_VAR_ssh_public_key_path: ${{ runner.temp }}/scaleway.pub
+          TF_VAR_kubeconfig_path: ./kubeconfig
+          TF_VAR_domain: ${{ vars.TF_DOMAIN }}
+          TF_VAR_letsencrypt_email: ${{ vars.TF_LETSENCRYPT_EMAIL }}
+          TF_VAR_admin_ssh_cidrs: '["${{ secrets.TF_ADMIN_SSH_CIDRS }}"]'
+        # Waits for the state lock if a deploy is mid-apply instead of failing.
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -lock-timeout=10m | tee "$RUNNER_TEMP/plan.txt"
+          {
+            echo '## terraform plan (scaleway)'
+            echo '```'
+            grep -E '^Plan:|^No changes\.' "$RUNNER_TEMP/plan.txt" || true
+            echo '```'
+            echo '<details><summary>Full plan</summary>'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/plan.txt"
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
