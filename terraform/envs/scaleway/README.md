@@ -103,6 +103,28 @@ terraform apply
 - **k3s API (6443) is no longer open to the internet** — only the private
   network, `admin_ssh_cidrs` and (in CI) the runner's own /32. A local apply
   must run from an IP in `admin_ssh_cidrs`.
+- **The control-plane moves from a dynamic to a reserved IP**, so its public
+  IP changes once. The kubeconfig is re-fetched automatically (the fetch is
+  triggered by the IP), but k3s' serving cert still carries the old IP as
+  `--tls-san`, so the k8s/helm providers can't connect until that is fixed.
+  Note the old IP first (`terraform output control_plane_ipv4`), then run
+  the targeted plan below and check that the server is **updated in place,
+  not replaced**. Don't use the phase-1 `install_*=false` flags here: on a
+  live cluster they plan to destroy the add-ons.
+
+  ```bash
+  terraform apply \
+    -target=module.cluster.scaleway_instance_ip.control_plane \
+    -target=module.cluster.scaleway_instance_server.control_plane \
+    -target=module.cluster.null_resource.kubeconfig
+  ```
+
+  Then on the node (`ssh root@NEW_IP`), replace the old IP with the new one in
+  `/etc/systemd/system/k3s.service` (`--tls-san`, `--node-external-ip`) and
+  run `systemctl daemon-reload && systemctl restart k3s`. Finish with a plain
+  `terraform apply`, check `kubectl get nodes`, and update the
+  `SCALEWAY_KUBECONFIG` CI secret from the re-fetched `kubeconfig`. A cluster
+  created after this change gets the reserved IP from the start.
 
 ## Status
 
