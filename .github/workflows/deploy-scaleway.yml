@@ -67,7 +67,6 @@ name: deploy-scaleway
 
 on:
   push:
-    # Only what envs/scaleway reads; negations must follow the include.
     paths:
       - "terraform/envs/scaleway/**"
       - "terraform/modules/scaleway-*/**"
