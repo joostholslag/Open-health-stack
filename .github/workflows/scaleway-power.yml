@@ -1,6 +1,7 @@
 # Power the Scaleway cluster's instances off (pause) or on (resume) to save
 # compute cost. Volumes, IPs and the load balancer are kept, so a resume brings
-# the cluster back with its data, IPs and DNS unchanged.
+# the cluster back with its data, IPs and DNS unchanged. deploy-scaleway resumes
+# the instances itself, so a deploy never needs a manual resume first.
 #
 # Secrets/variables:
 #   SCW_POWER_SECRET_KEY (repo secret) — API key of a separate IAM application
@@ -37,46 +38,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || vars.SCALEWAY_POWER_SCHEDULE == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Pause or resume instances
         env:
           SCW_SECRET_KEY: ${{ secrets.SCW_POWER_SECRET_KEY }}
           SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
           ACTION: ${{ inputs.action || (github.event.schedule == '0 18 * * *' && 'pause' || 'resume') }}
-        run: |
-          set -euo pipefail
-          API="https://api.scaleway.com/instance/v1/zones/$SCW_ZONE"
-
-          servers() { # $1 = role tag
-            curl -sSf -H "X-Auth-Token: $SCW_SECRET_KEY" \
-              "$API/servers?project=$SCW_PROJECT_ID&tags=cluster:$CLUSTER_NAME,role:$1&per_page=100" \
-              | jq -r '.servers[] | "\(.id) \(.state | gsub(" "; "_")) \(.name)"'
-          }
-
-          act() { # $1 = poweron|poweroff, $2 = role tag; skips servers already in the target state
-            local want=stopped list
-            [ "$1" = poweron ] && want=running
-            list=$(servers "$2")
-            [ -n "$list" ] || { echo "no $2 servers tagged cluster:$CLUSTER_NAME" >&2; exit 1; }
-            while read -r id state name; do
-              if [ "$state" = "$want" ]; then echo "$name already $state"; continue; fi
-              case "$state" in starting|stopping) echo "$name is $state, waiting"; continue ;; esac
-              echo "$name: $state -> $1"
-              curl -sSf -o /dev/null -H "X-Auth-Token: $SCW_SECRET_KEY" -H "Content-Type: application/json" \
-                -X POST "$API/servers/$id/action" -d "{\"action\":\"$1\"}"
-            done <<< "$list"
-            for _ in $(seq 1 60); do
-              if servers "$2" | awk -v w="$want" '$2 != w {bad=1} END {exit bad}'; then
-                echo "all $2 servers $want"; return 0
-              fi
-              sleep 10
-            done
-            echo "timed out waiting for $2 servers to be $want:" >&2; servers "$2" >&2; exit 1
-          }
-
-          case "$ACTION" in
-            pause)  act poweroff agent; act poweroff control-plane ;;
-            resume) act poweron control-plane; act poweron agent ;;
-            *) echo "unknown action: $ACTION" >&2; exit 1 ;;
-          esac
-          echo "## Scaleway cluster: $ACTION done" >> "$GITHUB_STEP_SUMMARY"
-          { servers control-plane; servers agent; } | awk '{print "- " $3 ": " $2}' >> "$GITHUB_STEP_SUMMARY"
+        run: scripts/scaleway-power.sh "$ACTION"

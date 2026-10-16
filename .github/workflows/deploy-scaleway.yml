@@ -111,6 +111,13 @@ jobs:
           printf '%s' "$SCALEWAY_KUBECONFIG" > ./kubeconfig
           printf '%s' "$SCALEWAY_SSH_PUBLIC_KEY" > "$RUNNER_TEMP/scaleway.pub"
 
+      # Instances may be paused by scaleway-power.yml.
+      - name: Resume instances
+        env:
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+        run: scripts/scaleway-power.sh resume
+
       # See NETWORK NOTE in the header.
       - name: Open k3s API to this runner
         id: api_access
@@ -133,11 +140,12 @@ jobs:
           # Wait for the rule to take effect: any HTTP status (401 included)
           # means the TCP connection got through.
           SERVER=$(awk '/server:/ {print $2; exit}' ./kubeconfig)
-          for i in $(seq 1 30); do
+          # 5 min: k3s needs time to come up after a resume.
+          for _ in $(seq 1 150); do
             curl -sk -o /dev/null --max-time 5 "$SERVER/livez" && exit 0
             sleep 2
           done
-          echo "k3s API at $SERVER still unreachable from $RUNNER_IP after 60s" >&2
+          echo "k3s API at $SERVER still unreachable from $RUNNER_IP after 5 min" >&2
           exit 1
 
       - name: terraform init
