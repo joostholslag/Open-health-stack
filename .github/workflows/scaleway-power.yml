@@ -1,0 +1,48 @@
+# Power the Scaleway cluster's instances off (pause) or on (resume) to save
+# compute cost. Volumes, IPs and the load balancer are kept, so a resume brings
+# the cluster back with its data, IPs and DNS unchanged. deploy-scaleway resumes
+# the instances itself, so a deploy never needs a manual resume first.
+#
+# Secrets/variables:
+#   SCW_POWER_SECRET_KEY (repo secret) — API key of a separate IAM application
+#     with only InstancesFullAccess on this project (no Object Storage, so no
+#     access to the Terraform state).
+#   SCW_PROJECT_ID (repo secret) — same as deploy-scaleway.
+#   SCALEWAY_POWER_SCHEDULE (repo variable) — "true" enables the schedule below
+#     (pause 18:00 UTC daily, resume 06:00 UTC Mon-Fri). Unset = manual only.
+name: scaleway-power
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: pause (power off) or resume (power on)
+        required: true
+        type: choice
+        options: [pause, resume]
+  schedule:
+    - cron: "0 18 * * *"
+    - cron: "0 6 * * 1-5"
+
+# Shared with deploy-scaleway so a pause never lands mid-apply.
+concurrency:
+  group: deploy-scaleway
+  cancel-in-progress: false
+
+env:
+  CLUSTER_NAME: ${{ vars.TF_CLUSTER_NAME || 'freshehr' }}
+  SCW_ZONE: ${{ vars.TF_ZONE || 'nl-ams-1' }}
+
+jobs:
+  power:
+    if: github.event_name == 'workflow_dispatch' || vars.SCALEWAY_POWER_SCHEDULE == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pause or resume instances
+        env:
+          SCW_SECRET_KEY: ${{ secrets.SCW_POWER_SECRET_KEY }}
+          SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+          ACTION: ${{ inputs.action || (github.event.schedule == '0 18 * * *' && 'pause' || 'resume') }}
+        run: scripts/scaleway-power.sh "$ACTION"
