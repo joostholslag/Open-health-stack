@@ -41,3 +41,9 @@ services:
     ports:
       - "8083:8080"          # dev bypass — still OAuth-protected (native validation)
       - "5006:5006"
+
+  nuts-node:
+    ports:
+      - "8085:8080"          # dev bypass — public/client API (unauthenticated, POC only)
+      - "8086:8081"          # dev bypass — internal/admin API (DID/VC operations)
+      - "5555:5555"          # gRPC network protocol, needed for did:nuts creation/gossip

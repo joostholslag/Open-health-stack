@@ -415,9 +415,33 @@ services:
     networks:
       - health-stack
 
+  # ── Nuts node (VC-based data-exchange node — exploratory POC) ─────────────
+  # Standalone and NOT wired into any other service's auth chain. Only joins
+  # `health-stack` so it's reachable for future PIP/token-issuer experiments
+  # (see CLAUDE.md follow-ups). Do not add depends_on/edges here as part of
+  # this POC — that's a deliberate, separate decision.
+  nuts-node:
+    image: nutsfoundation/nuts-node:6.2.12
+    container_name: freshehr-nuts-node
+    environment:
+      NUTS_STRICTMODE: "false"                # local/dev only — never in prod
+      NUTS_URL: http://nuts-node:8080          # this node's own public-facing URL
+      NUTS_HTTP_INTERNAL_ADDRESS: ":8081"      # splits admin/DID/VC API off the public port
+    volumes:
+      - nuts-data:/nuts/data                   # did:nuts keys/state (gRPC network + crypto)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - health-stack
+
 volumes:
   db-data:
   hades-data:
+  nuts-data:
 
 networks:
   health-stack:
