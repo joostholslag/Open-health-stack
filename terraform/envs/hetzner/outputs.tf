@@ -51,19 +51,21 @@ output "credentials" {
   description = "All generated service credentials."
   sensitive   = true
   value = {
-    postgres_superuser         = random_password.pg_superuser.result
-    ehrbase_db                 = random_password.ehrbase_db.result
-    ehrbase_db_admin           = random_password.ehrbase_db_admin.result
-    hapi_db                    = random_password.hapi_db.result
-    openfhir_db                = random_password.openfhir_db.result
-    keycloak_db                = random_password.keycloak_db.result
-    keycloak_admin_user        = "admin"
-    keycloak_admin_password    = random_password.keycloak_admin.result
-    kc_api_client_id           = "api-client"
-    kc_api_client_secret       = random_password.kc_api_client.result
-    kc_hapi_svc_secret         = random_password.kc_hapi_svc.result
-    oauth2_proxy_client_secret = random_password.oauth2_proxy_client.result
-    oauth2_proxy_cookie_secret = random_password.oauth2_proxy_cookie.result
+    postgres_superuser              = random_password.pg_superuser.result
+    ehrbase_db                      = random_password.ehrbase_db.result
+    ehrbase_db_admin                = random_password.ehrbase_db_admin.result
+    hapi_db                         = random_password.hapi_db.result
+    openfhir_db                     = random_password.openfhir_db.result
+    keycloak_db                     = random_password.keycloak_db.result
+    keycloak_admin_user             = "admin"
+    keycloak_admin_password         = random_password.keycloak_admin.result
+    kc_api_client_id                = "api-client"
+    kc_api_client_secret            = random_password.kc_api_client.result
+    kc_hapi_svc_secret              = random_password.kc_hapi_svc.result
+    kc_dokter_joost_password        = random_password.kc_dokter_joost.result
+    kc_verpleegkundige_bas_password = random_password.kc_verpleegkundige_bas.result
+    oauth2_proxy_client_secret      = random_password.oauth2_proxy_client.result
+    oauth2_proxy_cookie_secret      = random_password.oauth2_proxy_cookie.result
   }
 }
 

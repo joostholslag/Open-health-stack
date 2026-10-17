@@ -31,6 +31,21 @@ require_token() {
   [ -n "$TOKEN" ] || { echo "FATAL: no token from Keycloak at $KEYCLOAK (is the stack up? make up)"; exit 1; }
 }
 
+# Token for one of the dokter-joost/verpleegkundige-bas test users
+# (docker/keycloak/realm-freshehr.json) via the public verify-cli client's
+# direct-access-grant (ROPC) login — these are real interactive Keycloak
+# users (nictiz-ui logs them in through its own client); this is just how the
+# CLI test suite fetches a token for one without a browser.
+# fetch_user_token <username> <password>
+fetch_user_token() {
+  curl -sS -X POST "$KEYCLOAK/auth/realms/freshehr/protocol/openid-connect/token" \
+    -d grant_type=password \
+    -d client_id=verify-cli \
+    -d username="$1" \
+    -d password="$2" \
+  | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
+}
+
 pass() { printf '  PASS  %s\n' "$*"; }
 
 fail() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }

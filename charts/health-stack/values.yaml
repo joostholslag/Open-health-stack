@@ -154,9 +154,14 @@ secrets:
       OPENFHIR_DB_PASS: openfhir
     # Keycloak + oauth2-proxy credentials. Placeholders for dev (secrets.create=true)
     # ONLY — Terraform overrides every one of these with generated values on Hetzner.
-    # The three client secrets are substituted into the realm import
-    # (config/realm-freshehr.json.tpl) AND handed to their consumers, so realm and
-    # consumers always agree.
+    # Every *_SECRET/*_PASSWORD below is substituted into the realm import
+    # (config/realm-freshehr.json.tpl); API_CLIENT_SECRET, HAPI_SVC_SECRET and
+    # OAUTH2_PROXY_CLIENT_SECRET are additionally handed to their in-cluster
+    # consumer Secrets so realm and consumers always agree. DOKTER_JOOST_PASSWORD
+    # and VERPLEEGKUNDIGE_BAS_PASSWORD have no in-cluster consumer — they're the
+    # login password for the dokter-joost/verpleegkundige-bas test users
+    # (interactive Keycloak users nictiz-ui logs in via its own client;
+    # scripts/verify.sh fetches a token for them through the verify-cli client).
     keycloak:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -164,6 +169,8 @@ secrets:
       KC_DB_PASSWORD: keycloak
       API_CLIENT_SECRET: dev-api-client-secret
       HAPI_SVC_SECRET: dev-hapi-svc-secret
+      DOKTER_JOOST_PASSWORD: dev-dokter-joost-password
+      VERPLEEGKUNDIGE_BAS_PASSWORD: dev-verpleegkundige-bas-password
       OAUTH2_PROXY_CLIENT_SECRET: dev-oauth2-proxy-secret
       # Must be exactly 16, 24 or 32 bytes (oauth2-proxy cookie encryption).
       OAUTH2_PROXY_COOKIE_SECRET: 0123456789abcdef0123456789abcdef
@@ -253,6 +260,27 @@ ehrbase:
   service:
     type: ClusterIP
     port: 8080
+  # ── PEP gateway + OPA (sidecars in the same Pod, see templates/ehrbase.yaml) ─
+  # The ehrbase Service targets gateway.port, not the real ehrbase container's
+  # 8080 — all three containers share the Pod's network namespace, so the
+  # gateway reaches `opa` and `ehrbase` over localhost with no extra Service.
+  gateway:
+    image:
+      repository: openresty/openresty
+      # Pinned to match docker/docker-compose.yml's ehrbase-gateway service.
+      tag: 1.25.3.2-alpine
+      pullPolicy: IfNotPresent
+    # 8090, not 8080: that port belongs to the `ehrbase` container in this Pod.
+    port: 8090
+    resources: {}
+  opa:
+    image:
+      repository: openpolicyagent/opa
+      # Pinned to match docker/docker-compose.yml's opa service.
+      tag: "0.70.0"
+      pullPolicy: IfNotPresent
+    port: 8181
+    resources: {}
 
 # ── openFHIR engine ──────────────────────────────────────────────────────────
 openfhir:
@@ -282,6 +310,55 @@ openfhir:
   service:
     type: ClusterIP
     port: 8080
+
+# ── hades (FHIR terminology server) ──────────────────────────────────────────
+# SNOMED CT / LOINC / FHIR-package terminology over $lookup/$expand/
+# ── Nuts node (VC/DID exploration POC) ───────────────────────────────────────
+# Standalone: NOT wired into OPA/Keycloak/EHRbase — see CLAUDE.md follow-ups.
+# Only the public API (8080) is reachable via ingress (path /nuts, matching
+# Nuts's own recommended-deployment model: /iam, /oauth2, /.well-known and
+# /statuslist are meant to be internet-reachable). The internal/admin API
+# (8081 — unauthenticated DID/VC management, deliberately never in the
+# ingress) and the gRPC network port (5555 — unauthenticated inbound peers in
+# non-strict mode) stay ClusterIP-only; reach them with kubectl port-forward.
+nutsNode:
+  enabled: true
+  replicas: 1
+  image:
+    repository: nutsfoundation/nuts-node
+    # Cosign-signed from this tag onward — see the verification command in
+    # CLAUDE.md's image-pins table before bumping.
+    tag: "6.2.12"
+    pullPolicy: IfNotPresent
+  env:
+    NUTS_STRICTMODE: "false"   # local/dev POC only — never set false in prod
+  # PVC for did:nuts keys/state (crypto + gRPC network storage).
+  storage: 1Gi
+  resources: {}
+  # First boot generates crypto material and initializes local storage before
+  # the HTTP listener opens; the startupProbe budgets 10s × this threshold
+  # (300s) so liveness/readiness (below) can stay tight once serving. Without
+  # this, the default liveness failureThreshold (3, 20s apart = 60s) restarts
+  # the container before first boot finishes — an infinite crash loop that
+  # `helm --wait` never clears (this is what took down the first attempt at
+  # this deploy: "context deadline exceeded", atomic rollback).
+  startupFailureThreshold: 30
+  # /status (bare "OK", no dependency checks) rather than /health: a liveness
+  # probe should answer "is this process alive", not "are its dependencies
+  # healthy" — /health can fail on a transient downstream blip and cause
+  # needless restarts. Matches the upstream nuts-foundation/nuts-node chart.
+  readiness:
+    path: /status
+    periodSeconds: 10
+    failureThreshold: 10
+  liveness:
+    path: /status
+    periodSeconds: 20
+  service:
+    type: ClusterIP
+    publicPort: 8080
+    internalPort: 8081
+    grpcPort: 5555
 
 # ── hades (FHIR terminology server) ──────────────────────────────────────────
 # SNOMED CT / LOINC / FHIR-package terminology over $lookup/$expand/
