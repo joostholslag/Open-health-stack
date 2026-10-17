@@ -239,6 +239,10 @@ verify: ## Data-plane test suite: templates, mappings, EPS ingest, AQL, tofhir c
 versions: ## Version drift report: declared pins (compose/Dockerfile/chart) vs running
 	@bash scripts/versions.sh
 
+.PHONY: opa-test
+opa-test: ## Unit-test the EHRbase gateway's OPA policy (needs the `opa` CLI; no running stack required)
+	opa test docker/opa/policies -v
+
 ## ── Layer 2: Kubernetes (Helm chart) ─────────────────────────────────────────
 ## Set ENV=hetzner|scaleway|dev (default hetzner). Local iteration uses values-dev.
 

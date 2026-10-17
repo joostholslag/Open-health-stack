@@ -4,7 +4,10 @@
 # oauth2-proxy edge auth on /fhir and /terminology — EHRbase and openFHIR
 # still demand a Bearer token even on their direct ports, since both validate
 # natively; hapi and hades have NO native auth, so their direct ports are
-# fully unauthenticated). Delete/rename this file
+# fully unauthenticated). The `ehrbase` port additionally goes through the
+# OPA-backed PEP gateway (that's the service now named `ehrbase`); a second
+# port on `ehrbase-backend` bypasses the gateway too, for debugging the
+# gateway/OPA policy itself. Delete/rename this file
 # (e.g. to docker-compose.override.yml.disabled) to run "prod-like": nginx-only
 # routing, every data route authenticated.
 #
@@ -21,7 +24,11 @@ services:
 
   ehrbase:
     ports:
-      - "8082:8080"          # dev bypass — still OAuth-protected (native validation)
+      - "8082:8080"          # dev bypass — still OAuth- AND OPA-protected (goes through the PEP gateway, since that's what `ehrbase` names now)
+
+  ehrbase-backend:
+    ports:
+      - "8092:8080"          # dev bypass PAST the PEP gateway too — only OAuth-protected; use to debug the gateway/OPA policy itself against the raw backend
 
   hades:
     ports:
