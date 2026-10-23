@@ -283,6 +283,24 @@ openfhir:
     type: ClusterIP
     port: 8080
 
+# ── openFHIR Atlas (mapping-management UI for the engine) ────────────────────
+# Served at https://<host>/atlas. Signs users in itself (OIDC code+PKCE as the
+# public `atlas` client of the realm) and calls the engine with the user's own
+# token, so no edge auth-url. Needs the `atlas` option in the openfhir-license.
+atlas:
+  enabled: true
+  replicas: 1
+  image:
+    repository: openfhir/openfhir-atlas
+    # Atlas 2.x (what engine >=2.2.2 serves) is only published as the moving
+    # `build` tag, so it is pinned by digest. Must match the compose default.
+    tag: "build@sha256:fb57f680148408e379c6c867c1d92a605f22c39e828be3295b9efc7e7c434679"
+    pullPolicy: IfNotPresent
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 8080
+
 # ── hades (FHIR terminology server) ──────────────────────────────────────────
 # SNOMED CT / LOINC / FHIR-package terminology over $lookup/$expand/
 # $validate-code/$subsumes/$translate. No Postgres wiring: terminology lives in

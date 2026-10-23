@@ -205,6 +205,24 @@ runs outside any request context) live under a different tenant than
 `make bootstrap` against `https://<host>` — with a freshehr-realm token. Old
 rows are orphaned, not migrated.
 
+### Adding the `atlas` client to a live realm
+
+The `atlas` client (openFHIR Atlas at `/atlas`) is additive. After the helm
+upgrade that introduces it (the keycloak pod then mounts the new realm
+import), create just that client from the rendered import:
+
+```bash
+kubectl exec -n health-stack deploy/keycloak -- sh -c '/opt/keycloak/bin/kcadm.sh \
+  config credentials --server http://localhost:8080/auth --realm master \
+  --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"'
+kubectl get secret -n health-stack keycloak-realm -o jsonpath='{.data.realm-freshehr\.json}' \
+  | base64 -d | jq '.clients[] | select(.clientId == "atlas")' \
+  | kubectl exec -i -n health-stack deploy/keycloak -- /opt/keycloak/bin/kcadm.sh \
+      create clients -r freshehr -f -
+```
+
+Until then Atlas starts but its login fails with Keycloak's "Client not found".
+
 ## Runbook: importing SNOMED CT into hades (one-off Job)
 
 Out of the box hades serves the FHIR core packages only (bootstrapped on first

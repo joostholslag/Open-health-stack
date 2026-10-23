@@ -1,0 +1,99 @@
+{{- if .Values.atlas.enabled }}
+{{- /*
+openFHIR Atlas — UI for FHIRConnect mappings / engine state. Spring Boot app,
+configured entirely via SPRING_APPLICATION_JSON (the jar bundles no
+application.yaml). Stateless: no DB (it excludes DataSource/Mongo autoconfig).
+spring.mail.host/port are placeholders: Atlas fails to start without a
+JavaMailSender, but only mails on first-login onboarding, which the realm's
+tenant claim (read from userinfo) skips.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "atlas") | nindent 4 }}
+spec:
+  replicas: {{ .Values.atlas.replicas }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "health-stack.selectorLabels" (dict "name" "atlas") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "health-stack.componentLabels" (dict "ctx" . "name" "atlas") | nindent 8 }}
+    spec:
+      {{- include "health-stack.scheduling" . | nindent 6 }}
+      containers:
+        - name: atlas
+          image: {{ include "health-stack.image" (dict "image" .Values.atlas.image) | quote }}
+          imagePullPolicy: {{ include "health-stack.pullPolicy" (dict "image" .Values.atlas.image) }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_APPLICATION_JSON
+              value: {{ dict
+                  "server" (dict
+                    "servlet" (dict "context-path" "/atlas")
+                    "forward-headers-strategy" "framework")
+                  "openfhir" (dict "url" (printf "http://openfhir:%v" .Values.openfhir.service.port))
+                  "keycloak" (dict
+                    "server-url" (printf "https://%s/auth" .Values.ingress.host)
+                    "open-fhir-realm" .Values.keycloak.realm)
+                  "spring" (dict
+                    "mail" (dict "host" "localhost" "port" 25)
+                    "security" (dict "oauth2" (dict "client" (dict
+                    "registration" (dict "keycloak" (dict
+                      "client-id" "atlas"
+                      "client-authentication-method" "none"
+                      "authorization-grant-type" "authorization_code"
+                      "redirect-uri" "{baseUrl}/login/oauth2/code/{registrationId}"
+                      "scope" "openid,profile,email"))
+                    "provider" (dict "keycloak" (dict
+                      "issuer-uri" (include "health-stack.oidcIssuer" .)
+                      "user-name-attribute" "preferred_username"))))))
+                  | toJson | quote }}
+          volumeMounts:
+            - name: license
+              mountPath: /app/openfhir-license.json
+              subPath: openfhir-license.json
+              readOnly: true
+          # tcpSocket: every HTTP path runs Atlas's onboarding filter, and the
+          # app has no actuator.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 20
+          {{- with .Values.atlas.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: license
+          secret:
+            secretName: {{ .Values.secretNames.openfhirLicense }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "atlas") | nindent 4 }}
+spec:
+  type: {{ .Values.atlas.service.type }}
+  selector:
+    {{- include "health-stack.selectorLabels" (dict "name" "atlas") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.atlas.service.port }}
+      targetPort: 8080
+{{- end }}

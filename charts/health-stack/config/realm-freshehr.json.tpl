@@ -177,6 +177,74 @@
         "email",
         "profile"
       ]
+    },
+    {
+      "clientId": "atlas",
+      "name": "openFHIR Atlas (mapping UI at /atlas)",
+      "description": "Public OIDC code+PKCE client Atlas signs users in with. Atlas forwards the user's access token to the engine, so the openFHIR scopes are DEFAULT scopes here and the tenant claim must also reach userinfo (Atlas reads it there; without it Atlas runs first-login onboarding on every request, which needs Keycloak admin credentials and fails with 401).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://__DOMAIN__/atlas/*"
+      },
+      "redirectUris": [
+        "https://__DOMAIN__/atlas/*"
+      ],
+      "webOrigins": [
+        "https://__DOMAIN__"
+      ],
+      "protocolMappers": [
+        {
+          "name": "openfhir-tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant",
+            "claim.value": "freshehr",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "roles",
+        "email",
+        "profile",
+        "opt.c",
+        "opt.r",
+        "opt.u",
+        "opt.d",
+        "fc.c",
+        "fc.r",
+        "fc.u",
+        "fc.d",
+        "conceptmap.c",
+        "conceptmap.r",
+        "conceptmap.u",
+        "conceptmap.d",
+        "openfhir.map",
+        "openfhir.insights"
+      ]
     }
   ],
   "users": [
