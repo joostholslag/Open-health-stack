@@ -78,6 +78,7 @@ row oauth2-proxy  "oauth2-proxy/oauth2-proxy"    "quay.io/oauth2-proxy/oauth2-pr
 # hades is a team image shared by both layers (compose ${HADES_IMAGE:-...}
 # default vs chart images.hades) — the tags must agree like any shared pin.
 row hades         "freshehrteam/hades"           "ghcr.io/freshehrteam/hades"
+row atlas         "openfhir-atlas"               "openfhir/openfhir-atlas"
 
 # Components that exist in only one layer — informational, no match check:
 # - hapi: compose builds locally FROM the Dockerfile pin; the chart pulls the

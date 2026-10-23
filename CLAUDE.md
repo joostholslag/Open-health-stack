@@ -45,6 +45,7 @@ Compose and chart MUST declare the same tag for shared components;
 | eps-mappings     | —                                  | `charts/health-stack/values.yaml:103` + `values-hetzner.yaml:52` | team image on `ghcr.io/freshehrteam`; same explicit-tag rule as hapi (pushed) |
 | hades (jar)      | `docker/hades/Dockerfile:21` (`ARG HADES_VERSION` + `HADES_SHA256`, bumped in lockstep) | — | the real upstream pin; fetch the release's `.jar.sha256` asset |
 | hades (pushed)   | `docker/docker-compose.yml:320`    | `charts/health-stack/values.yaml:110` + `values-hetzner.yaml:55` | team image `ghcr.io/freshehrteam/hades`; same explicit-tag rule as hapi (pushed) |
+| openfhir-atlas   | `docker/docker-compose.yml:323` (opt-in profile `atlas`) | `charts/health-stack/values.yaml:297` | mapping UI at `/atlas`; Atlas 2.x exists only as the moving `build` tag, so pin `build@sha256:<index digest>`. Own OIDC login via the public `atlas` realm client (both realm copies); needs the `atlas` license option. |
 
 ## Code style
 

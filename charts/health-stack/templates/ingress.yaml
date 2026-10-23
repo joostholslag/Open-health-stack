@@ -8,13 +8,14 @@ metadata:
   annotations:
     # This Ingress carries ONLY /fhir. Every nginx.ingress annotation below is
     # Ingress-scoped, not path-scoped, so each route whose annotation set differs
-    # needs its own object — which is why this chart renders five:
+    # needs its own object — which is why this chart renders one per route:
     #
     #   health-stack              /fhir           HAPI          — edge OAuth (auth-url), no rewrite
     #   health-stack-ehrbase      /ehrbase        EHRbase       — NO edge auth, no rewrite
     #   health-stack-openfhir     /openfhir       openFHIR      — NO edge auth (native), + rewrite
     #   health-stack-terminology  /terminology    hades         — edge OAuth (auth-url), + rewrite
     #   health-stack-auth         /auth, /oauth2  keycloak/o2p  — public, no rewrite
+    #   health-stack-atlas        /atlas          Atlas         — NO edge auth (own OIDC login), no rewrite
     #
     # No rewrite-target here on purpose: HAPI genuinely serves under /fhir, so the
     # path passes through untouched (same as the compose nginx). Only openFHIR needs
@@ -282,4 +283,46 @@ spec:
                 port:
                   number: {{ .Values.oauth2Proxy.service.port }}
           {{- end }}
+{{- end }}
+---
+{{- if and .Values.ingress.enabled .Values.atlas.enabled }}
+{{/*
+/atlas → openFHIR Atlas. No rewrite: Atlas serves under /atlas itself
+(server.servlet.context-path). No auth-url, like /openfhir: Atlas runs its
+own OIDC login against the realm and only reaches the engine with the
+signed-in user's token, which the engine validates natively.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: health-stack-atlas
+  labels:
+    {{- include "health-stack.componentLabels" (dict "ctx" . "name" "atlas") | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /atlas
+            pathType: Prefix
+            backend:
+              service:
+                name: atlas
+                port:
+                  number: {{ .Values.atlas.service.port }}
 {{- end }}

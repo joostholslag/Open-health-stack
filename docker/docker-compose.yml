@@ -313,6 +313,33 @@ services:
     networks:
       - health-stack
 
+  # ── openFHIR Atlas (mapping UI, https://localhost/atlas) ──────────────────
+  # Opt-in: `docker compose --profile atlas up -d atlas`. Same config as the
+  # chart (templates/atlas.yaml). Browser login only works where the browser
+  # can reach the realm's issuer; here that is http://keycloak:8080 (KC_HOSTNAME),
+  # so locally it needs `keycloak` resolvable from the host.
+  atlas:
+    profiles: ["atlas"]
+    image: ${ATLAS_IMAGE:-openfhir/openfhir-atlas:build@sha256:fb57f680148408e379c6c867c1d92a605f22c39e828be3295b9efc7e7c434679}
+    container_name: freshehr-atlas
+    environment:
+      SPRING_APPLICATION_JSON: >-
+        {"server":{"servlet":{"context-path":"/atlas"},"forward-headers-strategy":"framework"},
+        "openfhir":{"url":"http://openfhir:8080"},
+        "keycloak":{"server-url":"http://keycloak:8080/auth","open-fhir-realm":"freshehr"},
+        "spring":{"mail":{"host":"localhost","port":25},"security":{"oauth2":{"client":{
+        "registration":{"keycloak":{"client-id":"atlas","client-authentication-method":"none","authorization-grant-type":"authorization_code","redirect-uri":"{baseUrl}/login/oauth2/code/{registrationId}","scope":"openid,profile,email"}},
+        "provider":{"keycloak":{"issuer-uri":"http://keycloak:8080/auth/realms/freshehr","user-name-attribute":"preferred_username"}}}}}}}
+    volumes:
+      - ./openfhir/license/openfhir-license.json:/app/openfhir-license.json:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      openfhir:
+        condition: service_healthy
+    networks:
+      - health-stack
+
   # ── hades (FHIR terminology server: SNOMED CT / LOINC / FHIR packages) ────
   hades:
     build:
